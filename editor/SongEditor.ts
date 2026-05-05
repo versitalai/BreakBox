@@ -54,6 +54,7 @@ import { VisualLoopControlsPrompt } from "./VisualLoopControlsPrompt";
 import { SampleLoadingStatusPrompt } from "./SampleLoadingStatusPrompt";
 import { AddSamplesPrompt } from "./AddSamplesPrompt";
 import { ShortenerConfigPrompt } from "./ShortenerConfigPrompt";
+import { MultiplayerPrompt } from "./MultiplayerPrompt";
 
 const { button, div, input, select, span, optgroup, option, canvas } = HTML;
 
@@ -770,6 +771,7 @@ export class SongEditor {
         option({ value: "viewPlayer" }, "▶ View in Song Player (⇧P)"),
         option({ value: "copyEmbed" }, "⎘ Copy HTML Embed Code"),
         option({ value: "songRecovery" }, "⚠ Recover Recent Song... (`)"), // */
+        option({ value: "multiplayer" }, "Multiplayer..."),
     );
     private readonly _editMenu: HTMLSelectElement = select({ style: "width: 100%;" },
         option({ selected: true, disabled: true, hidden: false }, "Edit"), // todo: "hidden" should be true but looks wrong on mac chrome, adds checkmark next to first visible option even though it's not selected. :(
@@ -1349,6 +1351,11 @@ export class SongEditor {
         this._barScrollBar.container,
     );
 
+    private readonly _multiplayerStatus: HTMLDivElement = div({ class: "multiplayer-status", style: "font-size: 80%; color: #94a3b8; display: none; align-items: center; gap: 5px; padding: 0 8px;" },
+        span({ style: "width: 8px; height: 8px; border-radius: 50%; background: #22c55e; display: inline-block;" }),
+        span("Connected"),
+    );
+
     private readonly _menuArea: HTMLDivElement = div({ class: "menu-area" },
         div({ class: "selectContainer menu file" },
             this._fileMenu,
@@ -1359,6 +1366,7 @@ export class SongEditor {
         div({ class: "selectContainer menu preferences" },
             this._optionsMenu,
         ),
+        this._multiplayerStatus,
     );
 
     private readonly _sampleLoadingBar: HTMLDivElement = div({ style: `width: 0%; height: 100%; background-color: ${ColorConfig.indicatorPrimary};` });
@@ -1464,6 +1472,7 @@ export class SongEditor {
     private _renderedIsRecording: boolean = false;
     private _renderedShowRecordButton: boolean = false;
     private _renderedCtrlHeld: boolean = false;
+    private _renderedMultiplayerConnected: boolean = false;
     private _ctrlHeld: boolean = false;
     private _shiftHeld: boolean = false;
     private _deactivatedInstruments: boolean = false;
@@ -2302,6 +2311,9 @@ export class SongEditor {
                     break;
                 case "configureShortener":
                     this.prompt = new ShortenerConfigPrompt(this.doc);
+                    break;
+                case "multiplayer":
+                    this.prompt = new MultiplayerPrompt(this.doc);
                     break;
                 case "harmonicsSettings":
                     this.prompt = new HarmonicsEditorPrompt(this.doc, this);
@@ -4006,11 +4018,15 @@ export class SongEditor {
     }
 
     public updatePlayButton = (): void => {
-        if (this._renderedIsPlaying != this.doc.synth.playing || this._renderedIsRecording != this.doc.synth.recording || this._renderedShowRecordButton != this.doc.prefs.showRecordButton || this._renderedCtrlHeld != this._ctrlHeld) {
+        const isMultiplayerConnected = this.doc.multiplayer.connected;
+        if (this._renderedIsPlaying != this.doc.synth.playing || this._renderedIsRecording != this.doc.synth.recording || this._renderedShowRecordButton != this.doc.prefs.showRecordButton || this._renderedCtrlHeld != this._ctrlHeld || this._renderedMultiplayerConnected != isMultiplayerConnected) {
             this._renderedIsPlaying = this.doc.synth.playing;
             this._renderedIsRecording = this.doc.synth.recording;
             this._renderedShowRecordButton = this.doc.prefs.showRecordButton;
             this._renderedCtrlHeld = this._ctrlHeld;
+            this._renderedMultiplayerConnected = isMultiplayerConnected;
+            
+            this._multiplayerStatus.style.display = isMultiplayerConnected ? "flex" : "none";
 
             if (document.activeElement == this._playButton || document.activeElement == this._pauseButton || document.activeElement == this._recordButton || document.activeElement == this._stopButton) {
                 // When a focused element is hidden, focus is transferred to the document, so let's refocus the editor instead to make sure we can still capture keyboard input.
@@ -5647,6 +5663,9 @@ export class SongEditor {
                 break;
             case "songRecovery":
                 this._openPrompt("songRecovery");
+                break;
+            case "multiplayer":
+                this._openPrompt("multiplayer");
                 break;
         }
         this._fileMenu.selectedIndex = 0;

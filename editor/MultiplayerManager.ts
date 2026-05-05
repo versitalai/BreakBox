@@ -7,20 +7,21 @@ export class MultiplayerManager {
     private doc: SongDocument;
     private isHost: boolean = false;
     public myId: string = "";
+    public connected: boolean = false;
 
     constructor(doc: SongDocument) {
         this.doc = doc;
     }
 
     public init(customId?: string) {
-        this.peer = new Peer(customId);
+        this.peer = customId ? new Peer(customId) : new Peer();
 
-        this.peer.on("open", (id) => {
+        this.peer.on("open", (id: string) => {
             this.myId = id;
             console.log("My Peer ID is: " + id);
         });
 
-        this.peer.on("connection", (conn) => {
+        this.peer.on("connection", (conn: any) => {
             this.isHost = true;
             this.setupConnection(conn);
         });
@@ -38,9 +39,12 @@ export class MultiplayerManager {
 
         conn.on("open", () => {
             console.log("Connected to peer!");
+            this.connected = true;
             // Host sends the current song state immediately upon connection
             if (this.isHost) {
                 this.syncState();
+                // Close the Multiplayer Connection prompt if it's open
+                this.doc.prompt = null;
             }
         });
 
@@ -64,6 +68,7 @@ export class MultiplayerManager {
 
         conn.on("close", () => {
             console.log("Connection closed");
+            this.connected = false;
             this.connection = null;
         });
     }
