@@ -54,6 +54,7 @@ import { VisualLoopControlsPrompt } from "./VisualLoopControlsPrompt";
 import { SampleLoadingStatusPrompt } from "./SampleLoadingStatusPrompt";
 import { AddSamplesPrompt } from "./AddSamplesPrompt";
 import { ShortenerConfigPrompt } from "./ShortenerConfigPrompt";
+import { MultiplayerPrompt } from "./MultiplayerPrompt";
 
 const { button, div, input, select, span, optgroup, option, canvas } = HTML;
 
@@ -770,6 +771,7 @@ export class SongEditor {
         option({ value: "viewPlayer" }, "▶ View in Song Player (⇧P)"),
         option({ value: "copyEmbed" }, "⎘ Copy HTML Embed Code"),
         option({ value: "songRecovery" }, "⚠ Recover Recent Song... (`)"), // */
+        option({ value: "multiplayer" }, "🎮 Multiplayer..."),
     );
     private readonly _editMenu: HTMLSelectElement = select({ style: "width: 100%;" },
         option({ selected: true, disabled: true, hidden: false }, "Edit"), // todo: "hidden" should be true but looks wrong on mac chrome, adds checkmark next to first visible option even though it's not selected. :(
@@ -2302,6 +2304,9 @@ export class SongEditor {
                     break;
                 case "configureShortener":
                     this.prompt = new ShortenerConfigPrompt(this.doc);
+                    break;
+                case "multiplayer":
+                    this.prompt = new MultiplayerPrompt(this.doc);
                     break;
                 case "harmonicsSettings":
                     this.prompt = new HarmonicsEditorPrompt(this.doc, this);
@@ -5647,6 +5652,9 @@ export class SongEditor {
                 break;
             case "songRecovery":
                 this._openPrompt("songRecovery");
+                break;
+            case "multiplayer":
+                this._openPrompt("multiplayer");
                 break;
         }
         this._fileMenu.selectedIndex = 0;

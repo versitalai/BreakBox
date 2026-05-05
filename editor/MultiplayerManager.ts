@@ -13,7 +13,7 @@ export class MultiplayerManager {
     }
 
     public init(customId?: string) {
-        this.peer = new Peer(customId);
+        this.peer = customId ? new Peer(customId) : new Peer();
 
         this.peer.on("open", (id) => {
             this.myId = id;
