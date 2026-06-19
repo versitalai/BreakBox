@@ -817,7 +817,7 @@ export class PatternEditor {
 
         // Close on click outside
         const closeHandler = (e: MouseEvent) => {
-            if (!this._chordContextMenu!.contains(e.target as Node)) {
+            if (this._chordContextMenu != null && !this._chordContextMenu.contains(e.target as Node)) {
                 this._hideChordContextMenu();
                 document.removeEventListener("click", closeHandler);
             }
