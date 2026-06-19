@@ -427,13 +427,17 @@ export class Note {
     public start: number;
     public end: number;
     public continuesLastPattern: boolean;
+    public noteId: number = -1; // Unique ID within pattern, -1 = unassigned (legacy)
+    public layer: number = 0;   // 0 = base layer, 1+ = overlapping layers
 
-    public constructor(pitch: number, start: number, end: number, size: number, fadeout: boolean = false) {
+    public constructor(pitch: number, start: number, end: number, size: number, fadeout: boolean = false, noteId: number = -1) {
         this.pitches = [pitch];
         this.pins = [makeNotePin(0, 0, size), makeNotePin(0, end - start, fadeout ? 0 : size)];
         this.start = start;
         this.end = end;
         this.continuesLastPattern = false;
+        this.noteId = noteId;
+        this.layer = 0;
     }
 
     public pickMainInterval(): number {
@@ -471,6 +475,8 @@ export class Note {
             newNote.pins.push(makeNotePin(pin.interval, pin.time, pin.size));
         }
         newNote.continuesLastPattern = this.continuesLastPattern;
+        newNote.noteId = -1; // Reset for new assignment
+        newNote.layer = this.layer + 1; // Clone goes to next layer
         return newNote;
     }
 
@@ -486,6 +492,13 @@ export class Note {
 export class Pattern {
     public notes: Note[] = [];
     public readonly instruments: number[] = [0];
+    public nextNoteId: number = 0;
+
+    public assignNoteId(note: Note): void {
+        if (note.noteId === -1) {
+            note.noteId = this.nextNoteId++;
+        }
+    }
 
     public cloneNotes(): Note[] {
         const result: Note[] = [];
@@ -499,6 +512,7 @@ export class Pattern {
         this.notes.length = 0;
         this.instruments[0] = 0;
         this.instruments.length = 1;
+        this.nextNoteId = 0;
     }
 
     public toJsonObject(song: Song, channel: Channel, isModChannel: boolean): any {
@@ -525,6 +539,12 @@ export class Pattern {
             };
             if (note.start == 0) {
                 noteObject["continuesLastPattern"] = note.continuesLastPattern;
+            }
+            if (note.noteId !== -1) {
+                noteObject["noteId"] = note.noteId;
+            }
+            if (note.layer !== 0) {
+                noteObject["layer"] = note.layer;
             }
             noteArray.push(noteObject);
         }
@@ -657,6 +677,14 @@ export class Pattern {
                     note.continuesLastPattern = false;
                 }
 
+                // Read noteId and layer (backward compatible)
+                if (noteObject["noteId"] !== undefined) {
+                    note.noteId = noteObject["noteId"] | 0;
+                }
+                if (noteObject["layer"] !== undefined) {
+                    note.layer = noteObject["layer"] | 0;
+                }
+
                 if ((format != "ultrabox" && format != "slarmoosbox") && instrument.modulators[mod] == Config.modulators.dictionary["tempo"].index) {
                     for (const pin of note.pins) {
                         const oldMin: number = 30;
@@ -666,6 +694,7 @@ export class Pattern {
                     }
                 }
 
+                this.assignNoteId(note);
                 this.notes.push(note);
             }
         }

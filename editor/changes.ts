@@ -4750,6 +4750,8 @@ export class ChangeNoteAdded extends UndoableChange {
         this._pattern = pattern;
         this._note = note;
         this._index = index;
+        // Assign noteId if not set
+        this._pattern.assignNoteId(this._note);
         this._didSomething();
         this.redo();
     }
@@ -4808,11 +4810,16 @@ export class ChangeNoteLength extends ChangePins {
 }
 
 export class ChangeNoteTruncate extends ChangeSequence {
-    constructor(doc: SongDocument, pattern: Pattern, start: number, end: number, skipNote: Note | null = null, force: boolean = false) {
+    constructor(doc: SongDocument, pattern: Pattern, start: number, end: number, skipNote: Note | null = null, force: boolean = false, targetNoteId: number = -1) {
         super();
         let i: number = 0;
         while (i < pattern.notes.length) {
             const note: Note = pattern.notes[i];
+            // If targetNoteId is specified, only affect that specific note
+            if (targetNoteId !== -1 && note.noteId !== targetNoteId) {
+                i++;
+                continue;
+            }
             if (note == skipNote && skipNote != null) {
                 i++;
             } else if (note.end <= start) {

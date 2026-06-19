@@ -61,7 +61,8 @@ function noteRangesAreNextToEachOther(a: [number, number], b: [number, number]):
 class PatternCursor {
     public valid: boolean = false;
     public prevNote: Note | null = null;
-    public curNote: Note | null = null;
+    public curNote: Note | null = null; // Primary note (first layer for backward compat)
+    public curNotes: Note[] = [];       // ALL notes at cursor position (multi-layer)
     public nextNote: Note | null = null;
     public pitch: number = 0;
     public pitchIndex: number = -1;
@@ -123,6 +124,10 @@ export class PatternEditor {
     private _mouseHorizontal: boolean = false;
     private _usingTouch: boolean = false;
     private _copiedPinChannels: NotePin[][] = [];
+
+    // Note layer picker for overlapping notes
+    private _noteLayerPicker: HTMLDivElement | null = null;
+    private _selectedNoteId: number = -1; // Currently selected note from picker
     private _copiedPins: NotePin[];
     private _mouseXStart: number = 0;
     private _mouseYStart: number = 0;
@@ -335,17 +340,21 @@ export class PatternEditor {
                         this._cursor.curIndex++;
                     }
                 } else if (note.start <= this._cursor.exactPart && note.end > this._cursor.exactPart) {
+                    // Collect ALL notes at this position for multi-layer support
+                    this._cursor.curNotes.push(note);
+                    if (!foundNote || (this._cursor.curNote != null && note.start < this._cursor.curNote.start)) {
+                        this._cursor.curNote = note;
+                        foundNote = true;
+                    }
                     if (this._doc.song.getChannelIsMod(this._doc.channel)) {
                         if (note.pitches[0] == Math.floor(this._findMousePitch(this._mouseY))) {
                             this._cursor.curNote = note;
                             foundNote = true;
                         }
+                    } else {
                         // Only increment index if the sought note has been found... or if this note truly starts before the other
-                        else if (!foundNote || (this._cursor.curNote != null && note.start < this._cursor.curNote.start))
+                        if (!foundNote || (this._cursor.curNote != null && note.start < this._cursor.curNote.start))
                             this._cursor.curIndex++;
-                    }
-                    else {
-                        this._cursor.curNote = note;
                     }
                 } else if (note.start > this._cursor.exactPart) {
                     if (this._doc.song.getChannelIsMod(this._doc.channel)) {
@@ -1883,6 +1892,12 @@ export class PatternEditor {
             this._mouseYStart = this._mouseY;
             this._updateCursorStatus();
             this._updatePreview();
+            
+            // Show layer picker if multiple notes overlap at cursor
+            if (this._cursor.curNotes.length > 1) {
+                this._createNoteLayerPicker();
+            }
+            
             const sequence: ChangeSequence = new ChangeSequence();
             this._dragChange = sequence;
             this._lastChangeWasPatternSelection = this._doc.lastChangeWas(this._changePatternSelection);
@@ -1896,8 +1911,9 @@ export class PatternEditor {
                 if ((this._doc.selection.patternSelectionActive && this._cursor.pitchIndex == -1) || this._cursorIsInSelection()) {
                     sequence.append(new ChangePatternSelection(this._doc, 0, 0));
                 } else {
-                    if (this._cursor.curNote != null) {
-                        sequence.append(new ChangePatternSelection(this._doc, this._cursor.curNote.start, this._cursor.curNote.end));
+                    const targetNote = this._getTargetNote();
+                    if (targetNote != null) {
+                        sequence.append(new ChangePatternSelection(this._doc, targetNote.start, targetNote.end));
                     } else {
                         const start: number = Math.max(0, Math.min((this._doc.song.beatsPerBar - 1) * Config.partsPerBeat, Math.floor(this._cursor.exactPart / Config.partsPerBeat) * Config.partsPerBeat));
                         const end: number = start + Config.partsPerBeat;
@@ -2203,7 +2219,7 @@ export class PatternEditor {
                         this._dragSize = this._cursor.curNote.pins[this._cursor.nearPinIndex].size;
                         this._dragVisible = true;
 
-                        sequence.append(new ChangeNoteTruncate(this._doc, this._pattern, start, end, this._cursor.curNote));
+                        sequence.append(new ChangeNoteTruncate(this._doc, this._pattern, start, end, this._getTargetNote(), false, this._getTargetNote()!.noteId));
                         sequence.append(new ChangePinTime(this._doc, this._cursor.curNote, this._cursor.nearPinIndex, shiftedTime, continuesLastPattern));
                         this._copyPins(this._cursor.curNote);
                     }
@@ -2326,10 +2342,10 @@ export class PatternEditor {
                     if (bendEnd < 0) bendEnd = 0;
                     if (bendEnd > this._doc.song.beatsPerBar * Config.partsPerBeat) bendEnd = this._doc.song.beatsPerBar * Config.partsPerBeat;
                     if (bendEnd > this._cursor.curNote.end) {
-                        sequence.append(new ChangeNoteTruncate(this._doc, this._pattern, this._cursor.curNote.start, bendEnd, this._cursor.curNote));
+                        sequence.append(new ChangeNoteTruncate(this._doc, this._pattern, this._getTargetNote()!.start, bendEnd, this._getTargetNote(), false, this._getTargetNote()!.noteId));
                     }
                     if (bendEnd < this._cursor.curNote.start) {
-                        sequence.append(new ChangeNoteTruncate(this._doc, this._pattern, bendEnd, this._cursor.curNote.end, this._cursor.curNote));
+                        sequence.append(new ChangeNoteTruncate(this._doc, this._pattern, bendEnd, this._getTargetNote()!.end, this._getTargetNote(), false, this._getTargetNote()!.noteId));
                     }
 
                     let minPitch: number = Number.MAX_VALUE;
@@ -3118,9 +3134,76 @@ export class PatternEditor {
             if (prevPin.interval > nextPin.interval) pathString += "L " + prettyNumber(nextSide + 1) + " " + prettyNumber(nextHeight + radius * nextSize) + " ";
             pathString += "L " + prettyNumber(nextSide) + " " + prettyNumber(nextHeight + radius * nextSize) + " ";
         }
-        pathString += "z";
+            pathString += "z";
 
         svgElement.setAttribute("d", pathString);
+    }
+
+    // Note layer picker for overlapping notes
+    private _createNoteLayerPicker(): void {
+        if (this._noteLayerPicker != null) return;
+
+        this._noteLayerPicker = document.createElement("div");
+        this._noteLayerPicker.style.position = "absolute";
+        this._noteLayerPicker.style.background = "var(--ui-widget-background, #443a3a)";
+        this._noteLayerPicker.style.border = "1px solid var(--indicator-primary, #888)";
+        this._noteLayerPicker.style.borderRadius = "4px";
+        this._noteLayerPicker.style.padding = "4px";
+        this._noteLayerPicker.style.fontSize = "12px";
+        this._noteLayerPicker.style.color = "var(--primary-text, #ddd)";
+        this._noteLayerPicker.style.zIndex = "1000";
+        this._noteLayerPicker.style.pointerEvents = "auto";
+
+        const title = document.createElement("div");
+        title.textContent = `Select layer (${this._cursor.curNotes.length} notes)`;
+        title.style.marginBottom = "4px";
+        title.style.fontWeight = "bold";
+        this._noteLayerPicker.appendChild(title);
+
+        for (let i = 0; i < this._cursor.curNotes.length; i++) {
+            const note = this._cursor.curNotes[i];
+            const btn = document.createElement("button");
+            btn.textContent = `Layer ${i + 1} (id:${note.noteId}, ${note.start}-${note.end})`;
+            btn.style.display = "block";
+            btn.style.width = "100%";
+            btn.style.margin = "2px 0";
+            btn.style.padding = "4px 8px";
+            btn.style.background = i === this._cursor.curNotes.length - 1 ? "var(--hover-preview, #444)" : "var(--ui-widget-background, #333)";
+            btn.style.border = "1px solid var(--indicator-primary, #666)";
+            btn.style.borderRadius = "3px";
+            btn.style.color = "var(--primary-text, #ddd)";
+            btn.style.cursor = "pointer";
+            btn.onclick = () => {
+                this._selectedNoteId = note.noteId;
+                this._hideNoteLayerPicker();
+            };
+            this._noteLayerPicker.appendChild(btn);
+        }
+
+        // Position near mouse
+        const rect = this._svg.getBoundingClientRect();
+        this._noteLayerPicker.style.left = `${this._mouseX + rect.left + 10}px`;
+        this._noteLayerPicker.style.top = `${this._mouseY + rect.top + 10}px`;
+
+        document.body.appendChild(this._noteLayerPicker);
+    }
+
+    private _hideNoteLayerPicker(): void {
+        if (this._noteLayerPicker != null) {
+            this._noteLayerPicker.remove();
+            this._noteLayerPicker = null;
+        }
+    }
+
+    private _getTargetNote(): Note | null {
+        // If user selected a specific note via picker, use that
+        if (this._selectedNoteId !== -1) {
+            for (const note of this._cursor.curNotes) {
+                if (note.noteId === this._selectedNoteId) return note;
+            }
+        }
+        // Otherwise use primary curNote (first layer for backward compat)
+        return this._cursor.curNote;
     }
 
     private _pitchToPixelHeight(pitch: number): number {
