@@ -1893,6 +1893,11 @@ export class PatternEditor {
             this._updateCursorStatus();
             this._updatePreview();
             
+            // Reset selected note ID on new mouse down (unless layer picker is about to show)
+            // It will be set by layer picker if user picks a layer
+            if (this._cursor.curNotes.length <= 1) {
+                this._selectedNoteId = -1;
+            }
             // Show layer picker if multiple notes overlap at cursor
             if (this._cursor.curNotes.length > 1) {
                 this._createNoteLayerPicker();
@@ -2438,6 +2443,7 @@ export class PatternEditor {
         this._draggingEndOfSelection = false;
         this._draggingSelectionContents = false;
         this._lastChangeWasPatternSelection = false;
+        this._selectedNoteId = -1; // Reset selected note on mouse up
         this.modDragValueLabel.setAttribute("fill", ColorConfig.secondaryText);
         this._updateCursorStatus();
         this._updatePreview();
@@ -2996,7 +3002,11 @@ export class PatternEditor {
             const displayNumberedChords: boolean = chord.customInterval || chord.arpeggiates || chord.strumParts > 0 || transition.slides || chord.name == "monophonic";
             let noteFlashColor: string = "#ffffff";
             if (this._doc.prefs.notesFlashWhenPlayed) noteFlashColor = ColorConfig.getComputed("--note-flash");
-            for (const note of this._pattern.notes) {
+            
+            // Sort notes by layer so lower layers render first (higher layers on top)
+            const sortedNotes = [...this._pattern.notes].sort((a, b) => a.layer - b.layer);
+            
+            for (const note of sortedNotes) {
                 let disabled: boolean = false;
                 if (this._doc.song.getChannelIsMod(this._doc.channel)) {
                     const modIndex: number = instrument.modulators[Config.modCount - 1 - note.pitches[0]];
@@ -3004,6 +3014,10 @@ export class PatternEditor {
                         || instrument.invalidModulators[Config.modCount - 1 - note.pitches[0]])
                         disabled = true;
                 }
+                // Visual layer offset: each layer gets a slight vertical offset
+                const layerOffset: number = note.layer * 2; // 2px per layer
+                const baseRadius: number = (this._pitchHeight - this._pitchBorder) / 2 + 1;
+                const effectiveRadius: number = baseRadius - Math.min(layerOffset, baseRadius * 0.5);
                 for (let i: number = 0; i < note.pitches.length; i++) {
                     const pitch: number = note.pitches[i];
                     let notePath: SVGPathElement = SVG.path();
@@ -3011,12 +3025,12 @@ export class PatternEditor {
                     let colorSecondary: string = (disabled ? ColorConfig.disabledNoteSecondary : ColorConfig.getChannelColor(this._doc.song, this._doc.channel).secondaryNote);
                     notePath.setAttribute("fill", colorSecondary);
                     notePath.setAttribute("pointer-events", "none");
-                    this._drawNote(notePath, pitch, note.start, note.pins, (this._pitchHeight - this._pitchBorder) / 2 + 1, false, this._octaveOffset);
+                    this._drawNote(notePath, pitch, note.start, note.pins, effectiveRadius, false, this._octaveOffset + layerOffset);
                     this._svgNoteContainer.appendChild(notePath);
                     notePath = SVG.path();
                     notePath.setAttribute("fill", colorPrimary);
                     notePath.setAttribute("pointer-events", "none");
-                    this._drawNote(notePath, pitch, note.start, note.pins, (this._pitchHeight - this._pitchBorder) / 2 + 1, true, this._octaveOffset);
+                    this._drawNote(notePath, pitch, note.start, note.pins, effectiveRadius, true, this._octaveOffset + layerOffset);
                     this._svgNoteContainer.appendChild(notePath);
 
                     if (this._doc.prefs.notesFlashWhenPlayed && !disabled) {
@@ -3024,7 +3038,7 @@ export class PatternEditor {
                         // const noteFlashColor = ColorConfig.getComputed("--note-flash") !== "" ? "var(--note-flash)" : "#ffffff";
                         notePath.setAttribute("fill", noteFlashColor);
                         notePath.setAttribute("pointer-events", "none");
-                        this._drawNote(notePath, pitch, note.start, note.pins, (this._pitchHeight - this._pitchBorder) / 2 + 1, true, this._octaveOffset);
+                        this._drawNote(notePath, pitch, note.start, note.pins, effectiveRadius, true, this._octaveOffset + layerOffset);
                         this._svgNoteContainer.appendChild(notePath);
                         notePath.classList.add('note-flash');
                         notePath.style.opacity = "0";
@@ -3035,16 +3049,17 @@ export class PatternEditor {
                     }
 
                     let indicatorOffset: number = 2;
+                    const noteY: number = this._pitchToPixelHeight(pitch - this._octaveOffset + layerOffset);
                     if (note.continuesLastPattern) {
                         const arrowHeight: number = Math.min(this._pitchHeight, 20);
                         let arrowPath: string;
-                        arrowPath = "M " + prettyNumber(this._partWidth * note.start + indicatorOffset) + " " + prettyNumber(this._pitchToPixelHeight(pitch - this._octaveOffset) - 0.1 * arrowHeight);
-                        arrowPath += "L " + prettyNumber(this._partWidth * note.start + indicatorOffset) + " " + prettyNumber(this._pitchToPixelHeight(pitch - this._octaveOffset) + 0.1 * arrowHeight);
-                        arrowPath += "L " + prettyNumber(this._partWidth * note.start + indicatorOffset + 4) + " " + prettyNumber(this._pitchToPixelHeight(pitch - this._octaveOffset) + 0.1 * arrowHeight);
-                        arrowPath += "L " + prettyNumber(this._partWidth * note.start + indicatorOffset + 4) + " " + prettyNumber(this._pitchToPixelHeight(pitch - this._octaveOffset) + 0.3 * arrowHeight);
-                        arrowPath += "L " + prettyNumber(this._partWidth * note.start + indicatorOffset + 12) + " " + prettyNumber(this._pitchToPixelHeight(pitch - this._octaveOffset));
-                        arrowPath += "L " + prettyNumber(this._partWidth * note.start + indicatorOffset + 4) + " " + prettyNumber(this._pitchToPixelHeight(pitch - this._octaveOffset) - 0.3 * arrowHeight);
-                        arrowPath += "L " + prettyNumber(this._partWidth * note.start + indicatorOffset + 4) + " " + prettyNumber(this._pitchToPixelHeight(pitch - this._octaveOffset) - 0.1 * arrowHeight);
+                        arrowPath = "M " + prettyNumber(this._partWidth * note.start + indicatorOffset) + " " + prettyNumber(noteY - 0.1 * arrowHeight);
+                        arrowPath += "L " + prettyNumber(this._partWidth * note.start + indicatorOffset) + " " + prettyNumber(noteY + 0.1 * arrowHeight);
+                        arrowPath += "L " + prettyNumber(this._partWidth * note.start + indicatorOffset + 4) + " " + prettyNumber(noteY + 0.1 * arrowHeight);
+                        arrowPath += "L " + prettyNumber(this._partWidth * note.start + indicatorOffset + 4) + " " + prettyNumber(noteY + 0.3 * arrowHeight);
+                        arrowPath += "L " + prettyNumber(this._partWidth * note.start + indicatorOffset + 12) + " " + prettyNumber(noteY);
+                        arrowPath += "L " + prettyNumber(this._partWidth * note.start + indicatorOffset + 4) + " " + prettyNumber(noteY - 0.3 * arrowHeight);
+                        arrowPath += "L " + prettyNumber(this._partWidth * note.start + indicatorOffset + 4) + " " + prettyNumber(noteY - 0.1 * arrowHeight);
                         const arrow: SVGPathElement = SVG.path();
                         arrow.setAttribute("d", arrowPath);
                         arrow.setAttribute("fill", ColorConfig.invertedText);
@@ -3056,7 +3071,7 @@ export class PatternEditor {
                         if (displayNumberedChords) {
                             const oscillatorLabel: SVGTextElement = SVG.text();
                             oscillatorLabel.setAttribute("x", "" + prettyNumber(this._partWidth * note.start + indicatorOffset));
-                            oscillatorLabel.setAttribute("y", "" + prettyNumber(this._pitchToPixelHeight(pitch - this._octaveOffset)));
+                            oscillatorLabel.setAttribute("y", "" + prettyNumber(noteY));
                             oscillatorLabel.setAttribute("width", "30");
                             oscillatorLabel.setAttribute("fill", ColorConfig.invertedText);
                             oscillatorLabel.setAttribute("text-anchor", "start");
