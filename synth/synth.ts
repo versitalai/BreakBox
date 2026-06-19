@@ -3500,12 +3500,14 @@ export class Song {
             modCount = Config.modCount - modCount - 1;
 
             let instrument: Instrument = this.channels[modChannel].instruments[modInstrument];
-            let modulator = Config.modulators[instrument.modulators[modCount]];
-            let cap: number | undefined = modulator.maxRawVol;
+            let modulator = (instrument.modulators[modCount] >= 0 && instrument.modulators[modCount] < Config.modulators.length) ? Config.modulators[instrument.modulators[modCount]] : null;
+            let modName: string = "";
+            if (modulator) modName = modulator.name || "";
+            let cap: number | undefined = modulator ? modulator.maxRawVol : undefined;
 
             if (cap != undefined) {
                 // For filters, cap is dependent on which filter setting is targeted
-                if (modulator.name == "eq filter" || modulator.name == "note filter" || modulator.name == "song eq") {
+                if (modName == "eq filter" || modName == "note filter" || modName == "song eq") {
                     // type 0: number of filter morphs
                     // type 1/odd: number of filter x positions
                     // type 2/even: number of filter y positions
@@ -3527,11 +3529,13 @@ export class Song {
         if (!isMod)
             return Config.noteSizeMax;
         else {
-            let cap: number | undefined = Config.modulators[modSetting].maxRawVol;
+            let modulator = (modSetting >= 0 && modSetting < Config.modulators.length) ? Config.modulators[modSetting] : null;
+            let cap: number | undefined = modulator ? modulator.maxRawVol : undefined;
             if (cap != undefined) {
 
                 // For filters, cap is dependent on which filter setting is targeted
-                if (filterType != undefined && (Config.modulators[modSetting].name == "eq filter" || Config.modulators[modSetting].name == "note filter" || Config.modulators[modSetting].name == "song eq")) {
+                const modName: string = modulator ? modulator.name || "" : "";
+                if (filterType != undefined && (modName == "eq filter" || modName == "note filter" || modName == "song eq")) {
                     // type 0: number of filter morphs
                     // type 1/odd: number of filter x positions
                     // type 2/even: number of filter y positions
@@ -6017,8 +6021,9 @@ export class Song {
                         let perEnvelopeSpeed: number = 1;
                         if (!fromJukeBox && (!fromSlarmoosBox || beforeThree)) {
                             updatedEnvelopes = true;
-                            perEnvelopeSpeed = Config.envelopes[aa].speed;
-                            aa = Config.envelopes[aa].type; //update envelopes
+                            const envIdx = aa >= 0 && aa < Config.envelopes.length ? aa : 0;
+                            perEnvelopeSpeed = Config.envelopes[envIdx].speed;
+                            aa = Config.envelopes[envIdx].type; //update envelopes
                         } else if (!fromJukeBox && beforeFour && aa >= 3) aa++; //3 for random
                         let isTremolo2: boolean = false;
                         if ((fromSlarmoosBox && !beforeThree && beforeFour) || updatedEnvelopes) { //remove tremolo2
@@ -6037,19 +6042,23 @@ export class Song {
                         let waveform: number = LFOEnvelopeTypes.sine;
                         //pull out unique envelope setting values first, then general ones
                         if (fromJukeBox || (fromSlarmoosBox && !beforeFour)) {
-                            if (Config.newEnvelopes[envelope].name == "lfo") {
+                            const envIdx1 = envelope >= 0 && envelope < Config.newEnvelopes.length ? envelope : 0;
+                            const envName1 = Config.newEnvelopes[envIdx1].name || "";
+                            if (envName1 == "lfo") {
                                 waveform = clamp(0, LFOEnvelopeTypes.length, base64CharCodeToInt[compressed.charCodeAt(charIndex++)]);
                                 if (waveform == LFOEnvelopeTypes.steppedSaw || waveform == LFOEnvelopeTypes.steppedTri) {
                                     steps = clamp(1, Config.randomEnvelopeStepsMax + 1, base64CharCodeToInt[compressed.charCodeAt(charIndex++)]);
                                 }
-                            } else if (Config.newEnvelopes[envelope].name == "random") {
+                            } else if (envName1 == "random") {
                                 steps = clamp(1, Config.randomEnvelopeStepsMax + 1, base64CharCodeToInt[compressed.charCodeAt(charIndex++)]);
                                 seed = clamp(1, Config.randomEnvelopeSeedMax + 1, base64CharCodeToInt[compressed.charCodeAt(charIndex++)]);
                                 waveform = clamp(0, RandomEnvelopeTypes.length, base64CharCodeToInt[compressed.charCodeAt(charIndex++)]); //we use waveform for the random type as well
                             }
                         }
                         if (fromJukeBox || (fromSlarmoosBox && !beforeThree)) {
-                            if (Config.newEnvelopes[envelope].name == "pitch") {
+                            const envIdx2 = envelope >= 0 && envelope < Config.newEnvelopes.length ? envelope : 0;
+                            const envName2 = Config.newEnvelopes[envIdx2].name || "";
+                            if (envName2 == "pitch") {
                                 if (!instrument.isNoiseInstrument) {
                                     let pitchEnvelopeCompact: number = base64CharCodeToInt[compressed.charCodeAt(charIndex++)];
                                     pitchEnvelopeStart = clamp(0, Config.maxPitch + 1, pitchEnvelopeCompact * 64 + base64CharCodeToInt[compressed.charCodeAt(charIndex++)]);
@@ -6065,7 +6074,9 @@ export class Song {
                                 envelopeDiscrete = (checkboxValues >> 1) == 1 ? true : false;
                             }
                             envelopeInverse = (checkboxValues & 1) == 1 ? true : false;
-                            if (Config.newEnvelopes[envelope].name != "pitch" && Config.newEnvelopes[envelope].name != "note size" && Config.newEnvelopes[envelope].name != "punch" && Config.newEnvelopes[envelope].name != "none") {
+                            const envIdx3 = envelope >= 0 && envelope < Config.newEnvelopes.length ? envelope : 0;
+                            const envName3 = Config.newEnvelopes[envIdx3].name || "";
+                            if (envName3 != "pitch" && envName3 != "note size" && envName3 != "punch" && envName3 != "none") {
                                 perEnvelopeSpeed = Config.perEnvelopeSpeedIndices[base64CharCodeToInt[compressed.charCodeAt(charIndex++)]];
                             }
                             perEnvelopeLowerBound = base64CharCodeToInt[compressed.charCodeAt(charIndex++)] / 10;
@@ -6106,7 +6117,9 @@ export class Song {
                         for (let i: number = 0; i < envelopeCount; i++) {
                             instrument.envelopes[i].pitchEnvelopeStart = instrumentPitchEnvelopeStart;
                             instrument.envelopes[i].pitchEnvelopeEnd = instrumentPitchEnvelopeEnd;
-                            instrument.envelopes[i].inverse = Config.envelopes[instrument.envelopes[i].envelope].name == "pitch" ? instrumentEnvelopeInverse : false;
+                            const envIdx: number = instrument.envelopes[i].envelope;
+                            const envelope: any = (envIdx >= 0 && envIdx < Config.envelopes.length) ? Config.envelopes[envIdx] : null;
+                            instrument.envelopes[i].inverse = (envelope ? envelope.name : "") == "pitch" ? instrumentEnvelopeInverse : false;
                         }
                     }
 
@@ -6316,14 +6329,19 @@ export class Song {
                                     instrument.modulators[mod] = bits.read(6);
                                 }
 
-                                if (!jumfive && (Config.modulators[instrument.modulators[mod]].name == "eq filter" || Config.modulators[instrument.modulators[mod]].name == "note filter" || Config.modulators[instrument.modulators[mod]].name == "song eq")) {
+                                // Bounds check modulator index before accessing .name
+                                const modIndex: number = instrument.modulators[mod];
+                                const modulator: any = (modIndex >= 0 && modIndex < Config.modulators.length) ? Config.modulators[modIndex] : null;
+                                const modName: string = modulator ? modulator.name : "";
+
+                                if (!jumfive && (modName == "eq filter" || modName == "note filter" || modName == "song eq")) {
                                     instrument.modFilterTypes[mod] = bits.read(6);
                                 }
 
-                                if (Config.modulators[instrument.modulators[mod]].name == "individual envelope speed" ||
-                                    Config.modulators[instrument.modulators[mod]].name == "reset envelope" ||
-                                    Config.modulators[instrument.modulators[mod]].name == "individual envelope lower bound" ||
-                                    Config.modulators[instrument.modulators[mod]].name == "individual envelope upper bound"
+                                if (modName == "individual envelope speed" ||
+                                    modName == "reset envelope" ||
+                                    modName == "individual envelope lower bound" ||
+                                    modName == "individual envelope upper bound"
                                 ) {
                                     instrument.modEnvelopeNumbers[mod] = bits.read(6);
                                 }
