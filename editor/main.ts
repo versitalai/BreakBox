@@ -126,7 +126,7 @@ editor.mainLayer.focus();
 if (!isMobile && editor.doc.prefs.autoPlay) {
     function autoplay(): void {
         if (!document.hidden) {
-            editor.doc.synth.play();
+            editor.doc.play();
             editor.updatePlayButton();
             window.removeEventListener("visibilitychange", autoplay);
         }

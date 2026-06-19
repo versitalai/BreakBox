@@ -34,10 +34,7 @@ export class SongPerformance {
     }
 
     public play(): void {
-        this._doc.synth.play();
-        this._doc.synth.enableMetronome = false;
-        this._doc.synth.countInMetronome = false
-        this._doc.synth.maintainLiveInput();
+        this._doc.play();
     }
 
     public pause(): void {
@@ -45,7 +42,6 @@ export class SongPerformance {
         this.clearAllBassPitches();
         if (this._recordingChange != null) {
             if (this._doc.song.barCount > this._songLengthWhenRecordingStarted && !this._lastBarHasPatterns()) {
-                // If an extra empty bar was added in case it was needed for recording, but it didn't end up getting used, delete it now.
                 new ChangeDeleteBars(this._doc, this._doc.song.barCount - 1, 1);
                 new ChangeChannelBar(this._doc, this._doc.channel, this._doc.song.barCount - 1);
             }
@@ -55,22 +51,15 @@ export class SongPerformance {
             }
             this._lastNote = null;
         }
-        this._doc.synth.pause();
-        this._doc.synth.resetEffects();
-        this._doc.synth.enableMetronome = false;
-        this._doc.synth.countInMetronome = false
-        if (this._doc.prefs.autoFollow) {
-            this._doc.synth.goToBar(this._doc.bar);
-        }
-        this._doc.synth.snapToBar();
+        this._doc.pause();
     }
 
     public record(): void {
-        this._doc.synth.snapToBar();
-        const playheadBar: number = Math.floor(this._doc.synth.playhead);
-        if (playheadBar != this._doc.bar) {
-            new ChangeChannelBar(this._doc, this._doc.channel, playheadBar);
-        }
+            this._doc.snapToBar();
+            const playheadBar: number = Math.floor(this._doc.playhead);
+            if (playheadBar != this._doc.bar) {
+                new ChangeChannelBar(this._doc, this._doc.channel, playheadBar);
+            }
         if (this._pitchesAreTemporary) {
             this.clearAllPitches();
             this._pitchesAreTemporary = false;

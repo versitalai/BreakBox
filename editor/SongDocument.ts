@@ -12,6 +12,8 @@ import { Preferences } from "./Preferences";
 import { Change } from "./Change";
 import { ChangeNotifier } from "./ChangeNotifier";
 import { ChangeSong, setDefaultInstruments, discardInvalidPatternInstruments, ChangeHoldingModRecording } from "./changes";
+import { AudioEngineApi } from "../synth/AudioEngineApi";
+import { WorkletSynthAdapter } from "./WorkletSynthAdapter";
 
 interface HistoryState {
     canUndo: boolean;
@@ -27,7 +29,8 @@ interface HistoryState {
 export class SongDocument {
     public colorTheme: string;
     public song: Song;
-    public synth: Synth;
+    public synth: Synth; // Kept for UI queries (playhead, playing, etc.)
+    public audioEngine: AudioEngineApi; // New: actual audio playback
     public performance: SongPerformance;
     public readonly notifier: ChangeNotifier = new ChangeNotifier();
     public readonly selection: Selection = new Selection(this);
@@ -88,13 +91,25 @@ export class SongDocument {
             errorAlert(error);
         }
         songString = this.song.toBase64String();
+
+        // Keep Synth for UI/queries
         this.synth = new Synth(this.song);
         this.synth.volume = this._calcVolume();
         this.synth.anticipatePoorPerformance = isMobile;
 
+        // New: AudioWorklet-backed engine for actual playback
+        this.audioEngine = new WorkletSynthAdapter();
+        this.audioEngine.onTick = (tick: number) => {
+            // Sync playhead from worklet to legacy synth for UI
+            this.synth.playhead = tick;
+            this._onPlayheadUpdate(tick);
+        };
+
+        // Initialize audio engine asynchronously
+        this.initializeAudioEngine();
+
         let state: HistoryState | null = this._getHistoryState();
         if (state == null) {
-            // When the page is first loaded, indicate that undo is NOT possible.
             state = { canUndo: false, sequenceNumber: 0, bar: 0, channel: 0, instrument: 0, recoveryUid: generateUid(), prompt: null, selection: this.selection.toJSON() };
         }
         if (state.recoveryUid == undefined) state.recoveryUid = generateUid();
@@ -107,7 +122,6 @@ export class SongDocument {
         for (let i: number = 0; i <= this.channel; i++) this.viewedInstrument[i] = 0;
         this.viewedInstrument[this.channel] = state.instrument | 0;
         this._recoveryUid = state.recoveryUid;
-        //this.barScrollPos = Math.max(0, this.bar - (this.trackVisibleBars - 6));
         this.prompt = state.prompt;
         this.selection.fromJSON(state.selection);
         this.selection.scrollToSelectedPattern();
@@ -125,6 +139,168 @@ export class SongDocument {
 
         this._validateDocState();
         this.performance = new SongPerformance(this);
+    }
+
+    private async initializeAudioEngine(): Promise<void> {
+        await this.audioEngine.init();
+        this.audioEngine.setSong(this.song);
+    }
+
+    private _onPlayheadUpdate(tick: number): void {
+        // Update bar position for UI (track editor, scrollbar, etc.)
+        const partsPerBar = this.song.beatsPerBar * 4; // Config.partsPerBeat = 4
+        this.bar = Math.floor(tick / partsPerBar);
+        // Trigger UI update
+        this.notifier.notifyWatchers();
+    }
+
+    // Audio engine delegation — keeps legacy synth for reads, routes writes to worklet
+    public play(): void {
+        this.audioEngine.play();
+        this.synth.enableMetronome = false;
+        this.synth.countInMetronome = false;
+        this.synth.maintainLiveInput();
+    }
+
+    public pause(): void {
+        this.audioEngine.pause();
+        this.synth.resetEffects();
+        this.synth.enableMetronome = false;
+        this.synth.countInMetronome = false;
+        if (this.prefs.autoFollow) {
+            this.seek(this.bar);
+        }
+        this.snapToBar();
+    }
+
+    public stop(): void {
+        this.audioEngine.stop();
+    }
+
+    public seek(tick: number): void {
+        this.audioEngine.seek(tick);
+    }
+
+    public goToBar(bar: number): void {
+        this.audioEngine.seek(bar * this.song.beatsPerBar * 4); // parts per bar
+    }
+
+    public snapToBar(): void {
+        // Sync legacy synth's bar position
+        this.synth.snapToBar();
+    }
+
+    public maintainLiveInput(): void {
+        this.synth.maintainLiveInput();
+    }
+
+    public get playing(): boolean {
+        return this.synth.playing;
+    }
+
+    public get recording(): boolean {
+        return this.synth.recording;
+    }
+
+    public get playhead(): number {
+        return this.synth.playhead;
+    }
+
+    public set playhead(value: number) {
+        this.synth.playhead = value;
+    }
+
+    public get loopBarStart(): number {
+        return this.synth.loopBarStart;
+    }
+
+    public get loopBarEnd(): number {
+        return this.synth.loopBarEnd;
+    }
+
+    public get enableMetronome(): boolean {
+        return this.synth.enableMetronome;
+    }
+    public set enableMetronome(value: boolean) {
+        this.synth.enableMetronome = value;
+    }
+
+    public get countInMetronome(): boolean {
+        return this.synth.countInMetronome;
+    }
+    public set countInMetronome(value: boolean) {
+        this.synth.countInMetronome = value;
+    }
+
+    public resetEffects(): void {
+        this.synth.resetEffects();
+    }
+
+    public startRecording(): void {
+        this.synth.startRecording();
+    }
+
+    // Live input properties (delegate to legacy synth)
+    public get liveInputPitches(): number[] {
+        return this.synth.liveInputPitches;
+    }
+    public set liveInputPitches(value: number[]) {
+        this.synth.liveInputPitches = value;
+    }
+    public get liveInputChannel(): number {
+        return this.synth.liveInputChannel;
+    }
+    public set liveInputChannel(value: number) {
+        this.synth.liveInputChannel = value;
+    }
+    public get liveInputDuration(): number {
+        return this.synth.liveInputDuration;
+    }
+    public set liveInputDuration(value: number) {
+        this.synth.liveInputDuration = value;
+    }
+    public get liveInputStarted(): boolean {
+        return this.synth.liveInputStarted;
+    }
+    public set liveInputStarted(value: boolean) {
+        this.synth.liveInputStarted = value;
+    }
+    public get liveInputInstruments(): number[] {
+        return this.synth.liveInputInstruments;
+    }
+    public set liveInputInstruments(value: number[]) {
+        this.synth.liveInputInstruments = value;
+    }
+
+    public get liveBassInputPitches(): number[] {
+        return this.synth.liveBassInputPitches;
+    }
+    public set liveBassInputPitches(value: number[]) {
+        this.synth.liveBassInputPitches = value;
+    }
+    public get liveBassInputChannel(): number {
+        return this.synth.liveBassInputChannel;
+    }
+    public set liveBassInputChannel(value: number) {
+        this.synth.liveBassInputChannel = value;
+    }
+    public get liveBassInputDuration(): number {
+        return this.synth.liveBassInputDuration;
+    }
+    public set liveBassInputDuration(value: number) {
+        this.synth.liveBassInputDuration = value;
+    }
+    public get liveBassInputStarted(): boolean {
+        return this.synth.liveBassInputStarted;
+    }
+    public set liveBassInputStarted(value: boolean) {
+        this.synth.liveBassInputStarted = value;
+    }
+    public get liveBassInputInstruments(): number[] {
+        return this.synth.liveBassInputInstruments;
+    }
+    public set liveBassInputInstruments(value: number[]) {
+        this.synth.liveBassInputInstruments = value;
     }
 
     public toggleDisplayBrowserUrl() {

@@ -1,0 +1,17 @@
+{
+    "compilerOptions": {
+        "rootDir": ".",
+        "outDir": "build/synth",
+        "target": "ES2022",
+        "module": "ESNext",
+        "moduleResolution": "node",
+        "sourceMap": true,
+        "declaration": false,
+        "noImplicitAny": true,
+        "strictNullChecks": true,
+        "lib": ["ES2022", "WebWorker"],
+        "skipLibCheck": true,
+        "types": []
+    },
+    "include": ["synth/BreakBoxProcessor.ts", "synth/audio-worklet.d.ts"]
+}

@@ -25,8 +25,7 @@ export class Preferences {
 	public enableChannelMuting: boolean = true;
 	public colorTheme: string;
 	public layout: string;
-	public displayBrowserUrl: boolean; //comment for testing
-	public displayBrowserUrl: boolean = false; //uncomment for testing
+	public displayBrowserUrl: boolean = false;
 	public volume: number = 75;
 	public visibleOctaves: number = Preferences.defaultVisibleOctaves;
 	public pressControlForShortcuts: boolean;
