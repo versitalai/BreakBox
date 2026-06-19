@@ -128,6 +128,10 @@ export class PatternEditor {
     // Note layer picker for overlapping notes
     private _noteLayerPicker: HTMLDivElement | null = null;
     private _selectedNoteId: number = -1; // Currently selected note from picker
+    
+    // Chord context menu
+    private _chordContextMenu: HTMLDivElement | null = null;
+    
     private _copiedPins: NotePin[];
     private _mouseXStart: number = 0;
     private _mouseYStart: number = 0;
@@ -228,6 +232,7 @@ export class PatternEditor {
             document.addEventListener("mouseup", this._whenCursorReleased);
             this._svg.addEventListener("mouseover", this._whenMouseOver);
             this._svg.addEventListener("mouseout", this._whenMouseOut);
+            this._svg.addEventListener("contextmenu", this._whenContextMenu);
 
             this._svg.addEventListener("touchstart", this._whenTouchPressed);
             this._svg.addEventListener("touchmove", this._whenTouchMoved);
@@ -762,6 +767,97 @@ export class PatternEditor {
     private _whenMouseOut = (event: MouseEvent): void => {
         if (!this._mouseOver) return;
         this._mouseOver = false;
+    }
+
+    private _whenContextMenu = (event: MouseEvent): void => {
+        event.preventDefault();
+        this._updateCursorStatus();
+        
+        // Check if we're over a chord note (multiple pitches)
+        if (this._cursor.valid && this._cursor.curNote != null && this._cursor.curNote.pitches.length > 1) {
+            this._showChordContextMenu(event.clientX, event.clientY, this._cursor.curNote);
+        }
+    }
+
+    private _showChordContextMenu(x: number, y: number, note: Note): void {
+        this._hideChordContextMenu();
+
+        this._chordContextMenu = document.createElement("div");
+        this._chordContextMenu.style.position = "fixed";
+        this._chordContextMenu.style.left = `${x}px`;
+        this._chordContextMenu.style.top = `${y}px`;
+        this._chordContextMenu.style.background = "var(--ui-widget-background, #333)";
+        this._chordContextMenu.style.border = "1px solid var(--indicator-primary, #666)";
+        this._chordContextMenu.style.borderRadius = "4px";
+        this._chordContextMenu.style.padding = "4px 0";
+        this._chordContextMenu.style.zIndex = "10000";
+        this._chordContextMenu.style.boxShadow = "0 4px 12px rgba(0,0,0,0.5)";
+        this._chordContextMenu.style.minWidth = "160px";
+
+        const splitBtn = document.createElement("button");
+        splitBtn.textContent = `Split Chord (${note.pitches.length} notes)`;
+        splitBtn.style.display = "block";
+        splitBtn.style.width = "100%";
+        splitBtn.style.padding = "8px 16px";
+        splitBtn.style.background = "transparent";
+        splitBtn.style.border = "none";
+        splitBtn.style.color = "var(--primary-text, #ddd)";
+        splitBtn.style.fontSize = "13px";
+        splitBtn.style.textAlign = "left";
+        splitBtn.style.cursor = "pointer";
+        splitBtn.onmouseover = () => splitBtn.style.background = "var(--hover-preview, #444)";
+        splitBtn.onmouseout = () => splitBtn.style.background = "transparent";
+        splitBtn.onclick = () => {
+            this._splitChord(note);
+            this._hideChordContextMenu();
+        };
+        this._chordContextMenu.appendChild(splitBtn);
+
+        document.body.appendChild(this._chordContextMenu);
+
+        // Close on click outside
+        const closeHandler = (e: MouseEvent) => {
+            if (!this._chordContextMenu!.contains(e.target as Node)) {
+                this._hideChordContextMenu();
+                document.removeEventListener("click", closeHandler);
+            }
+        };
+        setTimeout(() => document.addEventListener("click", closeHandler), 0);
+    }
+
+    private _hideChordContextMenu(): void {
+        if (this._chordContextMenu != null) {
+            this._chordContextMenu.remove();
+            this._chordContextMenu = null;
+        }
+    }
+
+    private _splitChord(note: Note): void {
+        if (note.pitches.length <= 1) return;
+        if (this._pattern == null) return;
+
+        const sequence: ChangeSequence = new ChangeSequence();
+        this._doc.setProspectiveChange(sequence);
+
+        // Remove the original chord note
+        sequence.append(new ChangeNoteAdded(this._doc, this._pattern, note, this._pattern.notes.indexOf(note), true));
+
+        // Create individual notes for each pitch
+        const pins = note.pins.map(pin => makeNotePin(pin.interval, pin.time, pin.size));
+        for (let i = 0; i < note.pitches.length; i++) {
+            const newNote: Note = new Note(
+                note.pitches[i],
+                note.start,
+                note.end,
+                pins[pins.length - 1].size,
+                note.continuesLastPattern
+            );
+            newNote.pins = pins;
+            newNote.continuesLastPattern = note.continuesLastPattern;
+            sequence.append(new ChangeNoteAdded(this._doc, this._pattern, newNote, this._pattern.notes.indexOf(note) + i, false));
+        }
+
+        this._doc.record(sequence);
     }
 
     private _whenMousePressed = (event: MouseEvent): void => {
