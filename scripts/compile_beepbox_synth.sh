@@ -9,6 +9,9 @@ npx tsc -p tsconfig_worklet.json
 # Copy worklet to expected location (lowercase with hyphen)
 cp website/synth/BreakBoxProcessor.js website/breakbox-processor.js
 cp website/synth/BreakBoxProcessor.js.map website/breakbox-processor.js.map 2>/dev/null || true
+# Also copy to repo root for GitHub Pages (serves from root)
+cp website/synth/BreakBoxProcessor.js breakbox-processor.js
+cp website/synth/BreakBoxProcessor.js.map breakbox-processor.js.map 2>/dev/null || true
 
 # Combine build/synth/synth.js and dependencies into website/beepbox_synth.js
 npx rollup build/synth/synth.js \
