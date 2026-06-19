@@ -11,6 +11,7 @@ import { ChangeSequence, UndoableChange } from "./Change";
 import { ChangeVolume, FilterMoveData, ChangeTempo, ChangePan, ChangeReverb, ChangeDistortion, ChangeOperatorAmplitude, ChangeFeedbackAmplitude, ChangePulseWidth, ChangeDetune, ChangeVibratoDepth, ChangeVibratoSpeed, ChangeVibratoDelay, ChangePanDelay, ChangeChorus, ChangeEQFilterSimplePeak, ChangeNoteFilterSimplePeak, ChangeStringSustain, ChangeEnvelopeSpeed, ChangeSupersawDynamism, ChangeSupersawShape, ChangeSupersawSpread, ChangePitchShift, ChangeChannelBar, ChangeDragSelectedNotes, ChangeEnsurePatternExists, ChangeNoteTruncate, ChangeNoteAdded, ChangePatternSelection, ChangePinTime, ChangeSizeBend, ChangePitchBend, ChangePitchAdded, ChangeArpeggioSpeed, ChangeBitcrusherQuantization, ChangeBitcrusherFreq, ChangeEchoSustain, ChangeEQFilterSimpleCut, ChangeNoteFilterSimpleCut, ChangeFilterMovePoint, ChangeDuplicateSelectedReusedPatterns, ChangeHoldingModRecording, ChangeDecimalOffset, ChangePerEnvelopeSpeed, ChangeSongFilterMovePoint, ChangeRingMod, ChangeRingModHz, ChangeGranular, ChangeGrainSize, ChangeEnvelopeLowerBound, ChangeEnvelopeUpperBound, ChangeGrainAmounts, ChangeGrainRange } from "./changes";
 import { prettyNumber } from "./EditorConfig";
 import { EnvelopeEditor } from "./EnvelopeEditor";
+import { NoteLayerPicker } from "./NoteLayerPicker";
 
 function makeEmptyReplacementElement<T extends Node>(node: T): T {
     const clone: T = <T>node.cloneNode(false);
@@ -61,7 +62,9 @@ function noteRangesAreNextToEachOther(a: [number, number], b: [number, number]):
 class PatternCursor {
     public valid: boolean = false;
     public prevNote: Note | null = null;
-    public curNote: Note | null = null;
+    public curNote: Note | null = null; // Primary note (for backward compat)
+    public curNotes: Note[] = []; // All notes at cursor position (for multi-layer)
+    public selectedNote: Note | null = null; // Note selected from picker
     public nextNote: Note | null = null;
     public pitch: number = 0;
     public pitchIndex: number = -1;
@@ -140,6 +143,7 @@ export class PatternEditor {
     private _changePatternSelection: UndoableChange | null = null;
     private _lastChangeWasPatternSelection: boolean = false;
     private _cursor: PatternCursor = new PatternCursor();
+    private _noteLayerPicker: NoteLayerPicker = new NoteLayerPicker();
     private _stashCursorPinVols: number[][] = [];
     private _pattern: Pattern | null = null;
     private _playheadX: number = 0.0;
@@ -319,6 +323,7 @@ export class PatternEditor {
                 / minDivision) * minDivision;
 
         let foundNote: boolean = false;
+        this._cursor.curNotes = []; // Clear multi-notes array
 
         if (this._pattern != null) {
             for (const note of this._pattern.notes) {
@@ -329,12 +334,14 @@ export class PatternEditor {
                         }
                         if (!foundNote)
                             this._cursor.curIndex++;
-
                     } else {
                         this._cursor.prevNote = note;
                         this._cursor.curIndex++;
                     }
                 } else if (note.start <= this._cursor.exactPart && note.end > this._cursor.exactPart) {
+                    // Collect all overlapping notes at this position
+                    this._cursor.curNotes.push(note);
+                    
                     if (this._doc.song.getChannelIsMod(this._doc.channel)) {
                         if (note.pitches[0] == Math.floor(this._findMousePitch(this._mouseY))) {
                             this._cursor.curNote = note;
@@ -345,7 +352,10 @@ export class PatternEditor {
                             this._cursor.curIndex++;
                     }
                     else {
-                        this._cursor.curNote = note;
+                        // For non-mod channels, set curNote to the first (bottom-most layer) note for backward compat
+                        if (this._cursor.curNote == null) {
+                            this._cursor.curNote = note;
+                        }
                     }
                 } else if (note.start > this._cursor.exactPart) {
                     if (this._doc.song.getChannelIsMod(this._doc.channel)) {
@@ -359,7 +369,8 @@ export class PatternEditor {
                     }
                 }
             }
-
+            // Removed extra brace here
+            
             if (this._doc.song.getChannelIsMod(this._doc.channel) && !this.editingModLabel) {
 
                 if (this._pattern.notes[this._cursor.curIndex] != null && this._cursor.curNote != null) {
@@ -1883,8 +1894,30 @@ export class PatternEditor {
             this._mouseYStart = this._mouseY;
             this._updateCursorStatus();
             this._updatePreview();
+
+            // Show note layer picker if multiple notes overlap at cursor
+            if (this._cursor.valid && this._cursor.curNotes.length > 1 && !this._shiftHeld) {
+                this._noteLayerPicker.show(this._cursor.curNotes, this._svg as unknown as HTMLElement, (selectedNote) => {
+                    this._cursor.selectedNote = selectedNote;
+                    // Clear any existing drag change and set up for the selected note
+                    if (this._dragChange) this._dragChange.undo();
+                    const sequence: ChangeSequence = new ChangeSequence();
+                    this._dragChange = sequence;
+                    this._doc.setProspectiveChange(this._dragChange);
+                    // Set up cursor for the selected note
+                    this._cursor.curNote = selectedNote;
+                    this._cursor.start = selectedNote.start;
+                    this._cursor.end = selectedNote.end;
+                    this._cursor.pins = selectedNote.pins;
+                    this._cursor.pitch = selectedNote.pitches[0];
+                    this._cursor.curIndex = this._pattern ? this._pattern.notes.indexOf(selectedNote) : 0;
+                    this._updateSelection();
+                });
+                this._updateSelection();
+                return; // Wait for picker selection before proceeding
+            }
+
             const sequence: ChangeSequence = new ChangeSequence();
-            this._dragChange = sequence;
             this._lastChangeWasPatternSelection = this._doc.lastChangeWas(this._changePatternSelection);
             this._doc.setProspectiveChange(this._dragChange);
 
@@ -2203,7 +2236,7 @@ export class PatternEditor {
                         this._dragSize = this._cursor.curNote.pins[this._cursor.nearPinIndex].size;
                         this._dragVisible = true;
 
-                        sequence.append(new ChangeNoteTruncate(this._doc, this._pattern, start, end, this._cursor.curNote));
+                        sequence.append(new ChangeNoteTruncate(this._doc, this._pattern, start, end, this._cursor.curNote, false, this._cursor.curNote.noteId));
                         sequence.append(new ChangePinTime(this._doc, this._cursor.curNote, this._cursor.nearPinIndex, shiftedTime, continuesLastPattern));
                         this._copyPins(this._cursor.curNote);
                     }
@@ -2326,10 +2359,10 @@ export class PatternEditor {
                     if (bendEnd < 0) bendEnd = 0;
                     if (bendEnd > this._doc.song.beatsPerBar * Config.partsPerBeat) bendEnd = this._doc.song.beatsPerBar * Config.partsPerBeat;
                     if (bendEnd > this._cursor.curNote.end) {
-                        sequence.append(new ChangeNoteTruncate(this._doc, this._pattern, this._cursor.curNote.start, bendEnd, this._cursor.curNote));
+                        sequence.append(new ChangeNoteTruncate(this._doc, this._pattern, this._cursor.curNote.start, bendEnd, this._cursor.curNote, false, this._cursor.curNote.noteId));
                     }
                     if (bendEnd < this._cursor.curNote.start) {
-                        sequence.append(new ChangeNoteTruncate(this._doc, this._pattern, bendEnd, this._cursor.curNote.end, this._cursor.curNote));
+                        sequence.append(new ChangeNoteTruncate(this._doc, this._pattern, bendEnd, this._cursor.curNote.end, this._cursor.curNote, false, this._cursor.curNote.noteId));
                     }
 
                     let minPitch: number = Number.MAX_VALUE;

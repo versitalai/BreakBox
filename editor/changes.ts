@@ -146,7 +146,7 @@ function removeRedundantPins(pins: NotePin[]): void {
     }
 }
 
-function projectNoteIntoBar(oldNote: Note, timeOffset: number, noteStartPart: number, noteEndPart: number, newNotes: Note[]): void {
+function projectNoteIntoBar(oldNote: Note, timeOffset: number, noteStartPart: number, noteEndPart: number, pattern: Pattern): void {
     // Create a new note, and interpret the pitch bend and size events
     // to determine where we need to insert pins to control interval and volume.
     const newNote: Note = new Note(-1, noteStartPart, noteEndPart, Config.noteSizeMax, false);
@@ -199,8 +199,8 @@ function projectNoteIntoBar(oldNote: Note, timeOffset: number, noteStartPart: nu
         newNote.continuesLastPattern = (timeOffset < 0 || oldNote.continuesLastPattern);
     } else {
         newNote.continuesLastPattern = false;
-        if (newNotes.length > 0 && oldNote.continuesLastPattern) {
-            const prevNote: Note = newNotes[newNotes.length - 1];
+        if (pattern.notes.length > 0 && oldNote.continuesLastPattern) {
+            const prevNote: Note = pattern.notes[pattern.notes.length - 1];
             if (prevNote.end == newNote.start && Synth.adjacentNotesHaveMatchingPitches(prevNote, newNote)) {
                 joinedWithPrevNote = true;
                 const newIntervalOffset: number = prevNote.pins[prevNote.pins.length - 1].interval;
@@ -216,7 +216,8 @@ function projectNoteIntoBar(oldNote: Note, timeOffset: number, noteStartPart: nu
         }
     }
     if (!joinedWithPrevNote) {
-        newNotes.push(newNote);
+        pattern.assignNoteId(newNote);
+        pattern.notes.push(newNote);
     }
 }
 
@@ -466,7 +467,7 @@ export class ChangeMoveAndOverflowNotes extends ChangeGroup {
                                 // This is a consideration to allow arbitrary note sequencing, e.g. for mod channels (so the pattern being used can jump around)
                                 pattern = newChannel.patterns[newChannel.bars[bar] - 1];
 
-                                projectNoteIntoBar(oldNote, absoluteNoteStart - barStartPart - noteStartPart, noteStartPart, noteEndPart, pattern.notes);
+                                projectNoteIntoBar(oldNote, absoluteNoteStart - barStartPart - noteStartPart, noteStartPart, noteEndPart, pattern);
                             }
                         }
                     }
@@ -3677,6 +3678,7 @@ export class ChangePaste extends ChangeGroup {
                     note.pins.push(makeNotePin(pin.interval, pin.time, pin.size));
                 }
                 note.continuesLastPattern = (noteObject["continuesLastPattern"] === true) && (note.start == 0);
+                pattern.assignNoteId(note);
                 pattern.notes.splice(noteInsertionIndex++, 0, note);
                 if (note.end > selectionEnd) {
                     this.append(new ChangeNoteLength(doc, note, note.start, selectionEnd));
@@ -4189,7 +4191,6 @@ export class ChangeMoveNotesSideways extends ChangeGroup {
                 const partsPerBar: number = Config.partsPerBeat * doc.song.beatsPerBar;
                 for (const channel of doc.song.channels) {
                     for (const pattern of channel.patterns) {
-                        const newNotes: Note[] = [];
 
                         for (let bar: number = 1; bar >= 0; bar--) {
                             const barStartPart: number = bar * partsPerBar;
@@ -4201,12 +4202,10 @@ export class ChangeMoveNotesSideways extends ChangeGroup {
                                 const noteEndPart: number = Math.min(partsPerBar, absoluteNoteEnd - barStartPart);
 
                                 if (noteStartPart < noteEndPart) {
-                                    projectNoteIntoBar(oldNote, absoluteNoteStart - barStartPart - noteStartPart, noteStartPart, noteEndPart, newNotes);
+                                    projectNoteIntoBar(oldNote, absoluteNoteStart - barStartPart - noteStartPart, noteStartPart, noteEndPart, pattern);
                                 }
                             }
                         }
-
-                        pattern.notes = newNotes;
                     }
                 }
             } break;
@@ -4750,6 +4749,8 @@ export class ChangeNoteAdded extends UndoableChange {
         this._pattern = pattern;
         this._note = note;
         this._index = index;
+        // Auto-assign noteId if not already set
+        this._pattern.assignNoteId(this._note);
         this._didSomething();
         this.redo();
     }
@@ -4808,11 +4809,16 @@ export class ChangeNoteLength extends ChangePins {
 }
 
 export class ChangeNoteTruncate extends ChangeSequence {
-    constructor(doc: SongDocument, pattern: Pattern, start: number, end: number, skipNote: Note | null = null, force: boolean = false) {
+    constructor(doc: SongDocument, pattern: Pattern, start: number, end: number, skipNote: Note | null = null, force: boolean = false, targetNoteId: number = -1) {
         super();
         let i: number = 0;
         while (i < pattern.notes.length) {
             const note: Note = pattern.notes[i];
+            // If targetNoteId is specified, only affect that note
+            if (targetNoteId !== -1 && note.noteId !== targetNoteId) {
+                i++;
+                continue;
+            }
             if (note == skipNote && skipNote != null) {
                 i++;
             } else if (note.end <= start) {
@@ -4827,6 +4833,8 @@ export class ChangeNoteTruncate extends ChangeSequence {
             } else if (note.start < start && note.end > end) {
                 if (!doc.song.getChannelIsMod(doc.channel) || force || (skipNote != null && note.pitches[0] == skipNote.pitches[0])) {
                     const copy: Note = note.clone();
+                    copy.noteId = -1; // Must get new ID since it's a separate note
+                    copy.layer = note.layer + 1; // Increment layer for overlap
                     this.append(new ChangeNoteLength(doc, note, note.start, start));
                     i++;
                     this.append(new ChangeNoteAdded(doc, pattern, copy, i, false));
@@ -4859,6 +4867,8 @@ class ChangeSplitNotesAtSelection extends ChangeSequence {
             const note: Note = pattern.notes[i];
             if (note.start < doc.selection.patternSelectionStart && doc.selection.patternSelectionStart < note.end) {
                 const copy: Note = note.clone();
+                copy.noteId = -1; // Must get new ID since it's a separate note
+                copy.layer = note.layer + 1;
                 this.append(new ChangeNoteLength(doc, note, note.start, doc.selection.patternSelectionStart));
                 i++;
                 this.append(new ChangeNoteAdded(doc, pattern, copy, i, false));
@@ -4866,6 +4876,8 @@ class ChangeSplitNotesAtSelection extends ChangeSequence {
                 // i++; // The second note might be split again at the end of the selection. Check it again.
             } else if (note.start < doc.selection.patternSelectionEnd && doc.selection.patternSelectionEnd < note.end) {
                 const copy: Note = note.clone();
+                copy.noteId = -1; // Must get new ID since it's a separate note
+                copy.layer = note.layer + 1;
                 this.append(new ChangeNoteLength(doc, note, note.start, doc.selection.patternSelectionEnd));
                 i++;
                 this.append(new ChangeNoteAdded(doc, pattern, copy, i, false));

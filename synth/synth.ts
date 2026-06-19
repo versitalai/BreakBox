@@ -428,13 +428,17 @@ export class Note {
     public start: number;
     public end: number;
     public continuesLastPattern: boolean;
+    public noteId: number = -1; // Unique ID within pattern for individual note control
+    public layer: number = 0; // Overlap layer (0 = base, 1+ = overlapping notes)
 
-    public constructor(pitch: number, start: number, end: number, size: number, fadeout: boolean = false) {
+    public constructor(pitch: number, start: number, end: number, size: number, fadeout: boolean = false, noteId: number = -1, layer: number = 0) {
         this.pitches = [pitch];
         this.pins = [makeNotePin(0, 0, size), makeNotePin(0, end - start, fadeout ? 0 : size)];
         this.start = start;
         this.end = end;
         this.continuesLastPattern = false;
+        this.noteId = noteId;
+        this.layer = layer;
     }
 
     public pickMainInterval(): number {
@@ -464,8 +468,8 @@ export class Note {
         return mainInterval;
     }
 
-    public clone(): Note {
-        const newNote: Note = new Note(-1, this.start, this.end, 3);
+    public clone(cloneId: boolean = false): Note {
+        const newNote: Note = new Note(-1, this.start, this.end, 3, false, cloneId ? this.noteId : -1, this.layer);
         newNote.pitches = this.pitches.concat();
         newNote.pins = [];
         for (const pin of this.pins) {
@@ -487,19 +491,28 @@ export class Note {
 export class Pattern {
     public notes: Note[] = [];
     public readonly instruments: number[] = [0];
+    public nextNoteId: number = 1; // Auto-incrementing ID for new notes
 
     public cloneNotes(): Note[] {
         const result: Note[] = [];
         for (const note of this.notes) {
-            result.push(note.clone());
+            result.push(note.clone(true));
         }
         return result;
+    }
+
+    public assignNoteId(note: Note): number {
+        if (note.noteId === -1) {
+            note.noteId = this.nextNoteId++;
+        }
+        return note.noteId;
     }
 
     public reset(): void {
         this.notes.length = 0;
         this.instruments[0] = 0;
         this.instruments.length = 1;
+        this.nextNoteId = 1;
     }
 
     public toJsonObject(song: Song, channel: Channel, isModChannel: boolean): any {
@@ -524,6 +537,12 @@ export class Pattern {
                 "pitches": note.pitches,
                 "points": pointArray,
             };
+            if (note.noteId !== -1) {
+                noteObject["noteId"] = note.noteId;
+            }
+            if (note.layer !== 0) {
+                noteObject["layer"] = note.layer;
+            }
             if (note.start == 0) {
                 noteObject["continuesLastPattern"] = note.continuesLastPattern;
             }
@@ -656,6 +675,17 @@ export class Pattern {
                     note.continuesLastPattern = (noteObject["continuesLastPattern"] === true);
                 } else {
                     note.continuesLastPattern = false;
+                }
+
+                // Read noteId and layer for individual note control
+                if (noteObject["noteId"] !== undefined) {
+                    note.noteId = noteObject["noteId"] | 0;
+                    if (note.noteId >= this.nextNoteId) {
+                        this.nextNoteId = note.noteId + 1;
+                    }
+                }
+                if (noteObject["layer"] !== undefined) {
+                    note.layer = noteObject["layer"] | 0;
                 }
 
                 if ((format != "ultrabox" && format != "slarmoosbox") && instrument.modulators[mod] == Config.modulators.dictionary["tempo"].index) {

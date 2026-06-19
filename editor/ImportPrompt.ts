@@ -525,6 +525,7 @@ export class ImportPrompt implements Prompt {
                                 note.pitches.push(heldPitch);
                             }
                         }
+                        pattern.assignNoteId(note);
                         pattern.notes.push(note);
 
                         heldPitches.length = 0;
@@ -793,6 +794,7 @@ export class ImportPrompt implements Prompt {
                                         pitchCount += weight;
                                     }
                                 }
+                                pattern.assignNoteId(note);
                                 pattern.notes.push(note);
                             }
                         }
@@ -875,6 +877,7 @@ export class ImportPrompt implements Prompt {
                         // Create a new note.
                         const newBPM = Math.max(Config.tempoMin, Math.min(Config.tempoMax, Math.round(microsecondsPerMinute / change.microsecondsPerBeat) - Config.modulators.dictionary["tempo"].convertRealFactor));
                         const note = new Note(tempoModPitch, noteStartPart, noteEndPart, newBPM, false);
+                        pattern.assignNoteId(note);
                         pattern.notes.push(note);
                     }
                 }

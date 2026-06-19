@@ -5478,12 +5478,16 @@ var beepbox = (function (exports) {
         return { interval: interval, time: time, size: size };
     }
     class Note {
-        constructor(pitch, start, end, size, fadeout = false) {
+        constructor(pitch, start, end, size, fadeout = false, noteId = -1, layer = 0) {
+            this.noteId = -1;
+            this.layer = 0;
             this.pitches = [pitch];
             this.pins = [makeNotePin(0, 0, size), makeNotePin(0, end - start, fadeout ? 0 : size)];
             this.start = start;
             this.end = end;
             this.continuesLastPattern = false;
+            this.noteId = noteId;
+            this.layer = layer;
         }
         pickMainInterval() {
             let longestFlatIntervalDuration = 0;
@@ -5511,8 +5515,8 @@ var beepbox = (function (exports) {
             }
             return mainInterval;
         }
-        clone() {
-            const newNote = new Note(-1, this.start, this.end, 3);
+        clone(cloneId = false) {
+            const newNote = new Note(-1, this.start, this.end, 3, false, cloneId ? this.noteId : -1, this.layer);
             newNote.pitches = this.pitches.concat();
             newNote.pins = [];
             for (const pin of this.pins) {
@@ -5534,18 +5538,26 @@ var beepbox = (function (exports) {
         constructor() {
             this.notes = [];
             this.instruments = [0];
+            this.nextNoteId = 1;
         }
         cloneNotes() {
             const result = [];
             for (const note of this.notes) {
-                result.push(note.clone());
+                result.push(note.clone(true));
             }
             return result;
+        }
+        assignNoteId(note) {
+            if (note.noteId === -1) {
+                note.noteId = this.nextNoteId++;
+            }
+            return note.noteId;
         }
         reset() {
             this.notes.length = 0;
             this.instruments[0] = 0;
             this.instruments.length = 1;
+            this.nextNoteId = 1;
         }
         toJsonObject(song, channel, isModChannel) {
             const noteArray = [];
@@ -5567,6 +5579,12 @@ var beepbox = (function (exports) {
                     "pitches": note.pitches,
                     "points": pointArray,
                 };
+                if (note.noteId !== -1) {
+                    noteObject["noteId"] = note.noteId;
+                }
+                if (note.layer !== 0) {
+                    noteObject["layer"] = note.layer;
+                }
                 if (note.start == 0) {
                     noteObject["continuesLastPattern"] = note.continuesLastPattern;
                 }
@@ -5684,6 +5702,15 @@ var beepbox = (function (exports) {
                     }
                     else {
                         note.continuesLastPattern = false;
+                    }
+                    if (noteObject["noteId"] !== undefined) {
+                        note.noteId = noteObject["noteId"] | 0;
+                        if (note.noteId >= this.nextNoteId) {
+                            this.nextNoteId = note.noteId + 1;
+                        }
+                    }
+                    if (noteObject["layer"] !== undefined) {
+                        note.layer = noteObject["layer"] | 0;
                     }
                     if ((format != "ultrabox" && format != "slarmoosbox") && instrument.modulators[mod] == Config.modulators.dictionary["tempo"].index) {
                         for (const pin of note.pins) {
