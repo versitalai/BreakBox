@@ -1,0 +1,22 @@
+{
+    "files": [ "synth/BreakBoxProcessor.ts" ],
+    "compilerOptions": {
+        "rootDir": "./",
+        "outDir": "website",
+        "target": "es2017",
+        "module": "esnext",
+        "moduleResolution": "node",
+        "sourceMap": true,
+        "removeComments": true,
+        "noImplicitAny": true,
+        "noImplicitThis": true,
+        "strictNullChecks": true,
+        "strictFunctionTypes": true,
+        "strictBindCallApply": true,
+        "noImplicitReturns": true,
+        "noFallthroughCasesInSwitch": true,
+        "noUnusedLocals": true,
+        "skipLibCheck": true,
+        "lib": [ "DOM", "ES2017" ]
+    }
+}

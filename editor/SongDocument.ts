@@ -13,6 +13,8 @@ import { Change } from "./Change";
 import { ChangeNotifier } from "./ChangeNotifier";
 import { ChangeSong, setDefaultInstruments, discardInvalidPatternInstruments, ChangeHoldingModRecording } from "./changes";
 import { MultiplayerManager } from "./MultiplayerManager";
+import { AudioEngineApi, LegacySynthAdapter } from "./BreakBoxAudioEngine";
+import { WorkletSynthAdapter } from "./WorkletSynthAdapter";
 
 interface HistoryState {
     canUndo: boolean;
@@ -28,7 +30,8 @@ interface HistoryState {
 export class SongDocument {
     public colorTheme: string;
     public song: Song;
-    public synth: Synth;
+    public audioEngine: AudioEngineApi;
+    public synth: Synth; // Kept for UI reads (playhead, recording state, etc.)
     public performance: SongPerformance;
     public readonly notifier: ChangeNotifier = new ChangeNotifier();
     public readonly selection: Selection = new Selection(this);
@@ -90,7 +93,22 @@ export class SongDocument {
             errorAlert(error);
         }
         songString = this.song.toBase64String();
-        this.synth = new Synth(this.song);
+        
+        // Initialize audio engine with fallback
+        this.audioEngine = new WorkletSynthAdapter();
+        this.initializeAudioEngine().catch(() => {
+            console.warn("Worklet initialization failed, falling back to legacy synth");
+            this.audioEngine = new LegacySynthAdapter();
+            return this.audioEngine.initialize(this.song);
+        });
+        
+        // Get internal synth for UI reads (playhead, recording, live input, etc.)
+        if (this.audioEngine instanceof LegacySynthAdapter) {
+            this.synth = (this.audioEngine as LegacySynthAdapter).getInternalSynth()!;
+        } else {
+            // Create a minimal Synth for UI reads when using worklet
+            this.synth = new Synth(this.song);
+        }
         this.synth.volume = this._calcVolume();
         this.synth.anticipatePoorPerformance = isMobile;
 
@@ -128,6 +146,25 @@ export class SongDocument {
         this._validateDocState();
         this.performance = new SongPerformance(this);
         this.multiplayer.init();
+    }
+
+    private async initializeAudioEngine(): Promise<void> {
+        await this.audioEngine.initialize(this.song);
+        // Sync volume after initialization
+        this.audioEngine.setVolume(this._calcVolume());
+    }
+
+    // Public playback methods that delegate to audio engine
+    public play(): void {
+        this.audioEngine.play();
+    }
+
+    public pause(): void {
+        this.audioEngine.pause();
+    }
+
+    public seek(tick: number): void {
+        this.audioEngine.seek(tick);
     }
 
     public toggleDisplayBrowserUrl() {
