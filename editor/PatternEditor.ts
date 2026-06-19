@@ -836,13 +836,16 @@ export class PatternEditor {
         if (note.pitches.length <= 1) return;
         if (this._pattern == null) return;
 
+        const noteIndex = this._pattern.notes.indexOf(note);
+        if (noteIndex === -1) return;
+
         const sequence: ChangeSequence = new ChangeSequence();
         this._doc.setProspectiveChange(sequence);
 
         // Remove the original chord note
-        sequence.append(new ChangeNoteAdded(this._doc, this._pattern, note, this._pattern.notes.indexOf(note), true));
+        sequence.append(new ChangeNoteAdded(this._doc, this._pattern, note, noteIndex, true));
 
-        // Create individual notes for each pitch
+        // Create individual notes for each pitch (insert at the same index, each insertion shifts the next)
         const pins = note.pins.map(pin => makeNotePin(pin.interval, pin.time, pin.size));
         for (let i = 0; i < note.pitches.length; i++) {
             const newNote: Note = new Note(
@@ -854,13 +857,16 @@ export class PatternEditor {
             );
             newNote.pins = pins;
             newNote.continuesLastPattern = note.continuesLastPattern;
-            sequence.append(new ChangeNoteAdded(this._doc, this._pattern, newNote, this._pattern.notes.indexOf(note) + i, false));
+            sequence.append(new ChangeNoteAdded(this._doc, this._pattern, newNote, noteIndex + i, false));
         }
 
         this._doc.record(sequence);
     }
 
     private _whenMousePressed = (event: MouseEvent): void => {
+        // Ignore right-click (button 2) - handled by contextmenu event
+        if (event.button === 2) return;
+        
         event.preventDefault();
         const boundingRect: ClientRect = this._svg.getBoundingClientRect();
         this._mouseX = ((event.clientX || event.pageX) - boundingRect.left) * this._editorWidth / (boundingRect.right - boundingRect.left);
