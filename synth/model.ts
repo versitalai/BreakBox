@@ -6292,12 +6292,22 @@ export class Song {
             if (OFFLINE) {
                 return Boolean(string);
             } else {
-                return Boolean(new URL(string));
+                return Boolean(new URL(Song._normalizeUrl(string)));
             }
         }
         catch (x) {
             return false;
         }
+    }
+
+    // BreakBox: FileGarden and other hosts often hand out links without a
+    // scheme (e.g. "file.garden/abc/break.mp3"). `new URL` rejects those as
+    // relative paths, so prepend https:// when no scheme is present.
+    private static _normalizeUrl(string: string): string {
+        if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(string)) {
+            return string; // already has a scheme (http:, https:, file:, data:, ...)
+        }
+        return "https://" + string;
     }
 
     // @TODO: Share more of this code with AddSamplesPrompt.
@@ -6378,7 +6388,7 @@ export class Song {
             if (OFFLINE) {
                 parsedUrl = urlSliced;
             } else {
-                parsedUrl = new URL(urlSliced);
+                parsedUrl = new URL(Song._normalizeUrl(urlSliced));
             }
         }
         else {
@@ -6394,7 +6404,7 @@ export class Song {
                     if (OFFLINE) {
                         parsedUrl = urlSliced;
                     } else {
-                        parsedUrl = new URL(urlSliced);
+                        parsedUrl = new URL(Song._normalizeUrl(urlSliced));
                     }
                     isCustomPercussive = true;
                 }
@@ -6404,7 +6414,7 @@ export class Song {
                     if (OFFLINE) {
                         parsedUrl = urlSliced;
                     } else {
-                        parsedUrl = new URL(urlSliced);
+                        parsedUrl = new URL(Song._normalizeUrl(urlSliced));
                     }
                     customSampleRate = clamp(8000, 96000 + 1, parseFloatWithDefault(url.slice(url.indexOf(",") + 1), 44100));
                     //should this be parseFloat or parseInt?
@@ -6416,7 +6426,7 @@ export class Song {
                     if (OFFLINE) {
                         parsedUrl = urlSliced;
                     } else {
-                        parsedUrl = new URL(urlSliced);
+                        parsedUrl = new URL(Song._normalizeUrl(urlSliced));
                     }
                     customRootKey = parseFloatWithDefault(url.slice(url.indexOf("!") + 1), 60);
                 }
@@ -6444,6 +6454,12 @@ export class Song {
         }
 
         if (parsedUrl != null) {
+            // BreakBox: normalize protocol-less URLs (e.g. FileGarden's
+            // "file.garden/abc/break.mp3") before storing for fetch().
+            // Skip in OFFLINE mode, which may use relative or file: paths.
+            if (!OFFLINE) {
+                urlSliced = Song._normalizeUrl(urlSliced);
+            }
             // Store in the new format.
             let urlWithNamedOptions = urlSliced;
             const namedOptions: string[] = [];

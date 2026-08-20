@@ -18541,12 +18541,18 @@ var beepbox = (function (exports) {
                     return Boolean(string);
                 }
                 else {
-                    return Boolean(new URL(string));
+                    return Boolean(new URL(Song._normalizeUrl(string)));
                 }
             }
             catch (x) {
                 return false;
             }
+        }
+        static _normalizeUrl(string) {
+            if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(string)) {
+                return string;
+            }
+            return "https://" + string;
         }
         static _parseAndConfigureCustomSample(url, customSampleUrls, customSamplePresets, sampleLoadingState, parseOldSyntax) {
             const defaultIndex = 0;
@@ -18624,7 +18630,7 @@ var beepbox = (function (exports) {
                     parsedUrl = urlSliced;
                 }
                 else {
-                    parsedUrl = new URL(urlSliced);
+                    parsedUrl = new URL(Song._normalizeUrl(urlSliced));
                 }
             }
             else {
@@ -18639,7 +18645,7 @@ var beepbox = (function (exports) {
                             parsedUrl = urlSliced;
                         }
                         else {
-                            parsedUrl = new URL(urlSliced);
+                            parsedUrl = new URL(Song._normalizeUrl(urlSliced));
                         }
                         isCustomPercussive = true;
                     }
@@ -18649,7 +18655,7 @@ var beepbox = (function (exports) {
                             parsedUrl = urlSliced;
                         }
                         else {
-                            parsedUrl = new URL(urlSliced);
+                            parsedUrl = new URL(Song._normalizeUrl(urlSliced));
                         }
                         customSampleRate = clamp(8000, 96000 + 1, parseFloatWithDefault(url.slice(url.indexOf(",") + 1), 44100));
                     }
@@ -18659,7 +18665,7 @@ var beepbox = (function (exports) {
                             parsedUrl = urlSliced;
                         }
                         else {
-                            parsedUrl = new URL(urlSliced);
+                            parsedUrl = new URL(Song._normalizeUrl(urlSliced));
                         }
                         customRootKey = parseFloatWithDefault(url.slice(url.indexOf("!") + 1), 60);
                     }
@@ -18684,6 +18690,9 @@ var beepbox = (function (exports) {
                 }
             }
             if (parsedUrl != null) {
+                if (!OFFLINE) {
+                    urlSliced = Song._normalizeUrl(urlSliced);
+                }
                 let urlWithNamedOptions = urlSliced;
                 const namedOptions = [];
                 if (customSampleRate !== 44100)

@@ -28112,12 +28112,18 @@ li.select2-results__option[role=group] > strong:hover {
                     return Boolean(string);
                 }
                 else {
-                    return Boolean(new URL(string));
+                    return Boolean(new URL(Song._normalizeUrl(string)));
                 }
             }
             catch (x) {
                 return false;
             }
+        }
+        static _normalizeUrl(string) {
+            if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(string)) {
+                return string;
+            }
+            return "https://" + string;
         }
         static _parseAndConfigureCustomSample(url, customSampleUrls, customSamplePresets, sampleLoadingState, parseOldSyntax) {
             const defaultIndex = 0;
@@ -28195,7 +28201,7 @@ li.select2-results__option[role=group] > strong:hover {
                     parsedUrl = urlSliced;
                 }
                 else {
-                    parsedUrl = new URL(urlSliced);
+                    parsedUrl = new URL(Song._normalizeUrl(urlSliced));
                 }
             }
             else {
@@ -28210,7 +28216,7 @@ li.select2-results__option[role=group] > strong:hover {
                             parsedUrl = urlSliced;
                         }
                         else {
-                            parsedUrl = new URL(urlSliced);
+                            parsedUrl = new URL(Song._normalizeUrl(urlSliced));
                         }
                         isCustomPercussive = true;
                     }
@@ -28220,7 +28226,7 @@ li.select2-results__option[role=group] > strong:hover {
                             parsedUrl = urlSliced;
                         }
                         else {
-                            parsedUrl = new URL(urlSliced);
+                            parsedUrl = new URL(Song._normalizeUrl(urlSliced));
                         }
                         customSampleRate = clamp(8000, 96000 + 1, parseFloatWithDefault(url.slice(url.indexOf(",") + 1), 44100));
                     }
@@ -28230,7 +28236,7 @@ li.select2-results__option[role=group] > strong:hover {
                             parsedUrl = urlSliced;
                         }
                         else {
-                            parsedUrl = new URL(urlSliced);
+                            parsedUrl = new URL(Song._normalizeUrl(urlSliced));
                         }
                         customRootKey = parseFloatWithDefault(url.slice(url.indexOf("!") + 1), 60);
                     }
@@ -28255,6 +28261,9 @@ li.select2-results__option[role=group] > strong:hover {
                 }
             }
             if (parsedUrl != null) {
+                if (!OFFLINE) {
+                    urlSliced = Song._normalizeUrl(urlSliced);
+                }
                 let urlWithNamedOptions = urlSliced;
                 const namedOptions = [];
                 if (customSampleRate !== 44100)
