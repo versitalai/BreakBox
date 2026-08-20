@@ -126,6 +126,13 @@ export class TipPrompt implements Prompt {
 					p("Useful for breakcore: map a drum break across the keyboard without it speeding up or slowing down per note."),
 				);
 			} break;
+			case "sampleMap": {
+				message = div(
+					h2("Per-Note Samples"),
+					p("Assign a different loaded custom sample to each pitch. Each key on the keyboard can trigger its own sample — perfect for slicing a break across keys."),
+					p("Load samples first via Add Samples, then assign them here. Pitches left on \"default\" use the instrument's base chip wave."),
+				);
+			} break;
 			case "instrumentTags": {
 				message = div(
 					h2("Instrument Tags"),

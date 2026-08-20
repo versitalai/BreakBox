@@ -2646,6 +2646,15 @@ export class ChangeSamplePitchLock extends ChangeInstrumentSlider {
     }
 }
 
+export class ChangeSampleMap extends ChangeInstrumentSlider {
+    constructor(doc: SongDocument, newMap: Map<number, number>) {
+        super(doc);
+        this._instrument.sampleMap = newMap;
+        doc.notifier.changed();
+        this._didSomething();
+    }
+}
+
 export class ChangeRingMod extends ChangeInstrumentSlider {
     constructor(doc: SongDocument, oldValue: number, newValue: number) {
         super(doc);

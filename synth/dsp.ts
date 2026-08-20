@@ -991,6 +991,11 @@ class Tone {
         this.supersawPrevPhaseDelta = null;
         this.drumsetPitch = null;
     }
+
+    // BreakBox 6B: per-pitch wave override for multiSample instruments.
+    // Set by computeTone; the chip synth functions prefer this over the
+    // instrumentState.wave (which is shared across tones of one instrument).
+    public wave: Float32Array | null = null;
 }
 
 class InstrumentState {
@@ -2014,7 +2019,9 @@ class InstrumentState {
 
     public updateWaves(instrument: Instrument, samplesPerSecond: number): void {
         this.volumeScale = 1.0;
-        if (instrument.type == InstrumentType.chip) {
+        if (instrument.type == InstrumentType.chip || instrument.type == InstrumentType.multiSample) {
+            // For multiSample, this is the fallback wave for unassigned pitches;
+            // per-pitch waves are resolved on the tone in computeTone.
             this.wave = (this.aliases) ? Config.rawChipWaves[instrument.chipWave].samples : Config.chipWaves[instrument.chipWave].samples;
             // advloop addition
             this.isUsingAdvancedLoopControls = instrument.isUsingAdvancedLoopControls;
@@ -4568,19 +4575,20 @@ export class Synth {
             pitchDamping = Config.chipNoises[instrument.chipNoise].isSoft ? 24.0 : 60.0;
         } else if (instrument.type == InstrumentType.fm || instrument.type == InstrumentType.fm6op) {
             baseExpression = Config.fmBaseExpression;
-        } else if (instrument.type == InstrumentType.chip) {
+        } else if (instrument.type == InstrumentType.chip || instrument.type == InstrumentType.multiSample) {
             baseExpression = Config.chipBaseExpression;
-            if (Config.chipWaves[instrument.chipWave].isCustomSampled) {
-                if (Config.chipWaves[instrument.chipWave].isPercussion) {
-                    basePitch = -84.37 + Math.log2(Config.chipWaves[instrument.chipWave].samples.length / Config.chipWaves[instrument.chipWave].sampleRate!) * -12 - (-60 + Config.chipWaves[instrument.chipWave].rootKey!);
+            const chipWaveIndex: number = instrument.getSampleChipWaveIndex(tone.pitches[0]);
+            if (Config.chipWaves[chipWaveIndex].isCustomSampled) {
+                if (Config.chipWaves[chipWaveIndex].isPercussion) {
+                    basePitch = -84.37 + Math.log2(Config.chipWaves[chipWaveIndex].samples.length / Config.chipWaves[chipWaveIndex].sampleRate!) * -12 - (-60 + Config.chipWaves[chipWaveIndex].rootKey!);
                 } else {
-                    basePitch += -96.37 + Math.log2(Config.chipWaves[instrument.chipWave].samples.length / Config.chipWaves[instrument.chipWave].sampleRate!) * -12 - (-60 + Config.chipWaves[instrument.chipWave].rootKey!);
+                    basePitch += -96.37 + Math.log2(Config.chipWaves[chipWaveIndex].samples.length / Config.chipWaves[chipWaveIndex].sampleRate!) * -12 - (-60 + Config.chipWaves[chipWaveIndex].rootKey!);
                 }
             } else {
-                if (Config.chipWaves[instrument.chipWave].isSampled && !Config.chipWaves[instrument.chipWave].isPercussion) {
-                    basePitch = basePitch - 63 + Config.chipWaves[instrument.chipWave].extraSampleDetune!
-                } else if (Config.chipWaves[instrument.chipWave].isSampled && Config.chipWaves[instrument.chipWave].isPercussion) {
-                    basePitch = -51 + Config.chipWaves[instrument.chipWave].extraSampleDetune!;
+                if (Config.chipWaves[chipWaveIndex].isSampled && !Config.chipWaves[chipWaveIndex].isPercussion) {
+                    basePitch = basePitch - 63 + Config.chipWaves[chipWaveIndex].extraSampleDetune!
+                } else if (Config.chipWaves[chipWaveIndex].isSampled && Config.chipWaves[chipWaveIndex].isPercussion) {
+                    basePitch = -51 + Config.chipWaves[chipWaveIndex].extraSampleDetune!;
                 }
             }
         } else if (instrument.type == InstrumentType.customChipWave) {
@@ -4606,8 +4614,9 @@ export class Synth {
             tone.reset();
             instrumentState.envelopeComputer.reset();
             // advloop addition
-            if (instrument.type == InstrumentType.chip && instrument.isUsingAdvancedLoopControls) {
-                const chipWaveLength = Config.rawRawChipWaves[instrument.chipWave].samples.length - 1;
+            if ((instrument.type == InstrumentType.chip || instrument.type == InstrumentType.multiSample) && instrument.isUsingAdvancedLoopControls) {
+                const chipWaveIndex: number = instrument.getSampleChipWaveIndex(tone.pitches[0]);
+                const chipWaveLength = Config.rawRawChipWaves[chipWaveIndex].samples.length - 1;
                 const firstOffset = instrument.chipWaveStartOffset / chipWaveLength;
                 // const lastOffset = (chipWaveLength - 0.01) / chipWaveLength;
                 // @TODO: This is silly and I should actually figure out how to
@@ -4625,6 +4634,13 @@ export class Synth {
             // advloop addition
         }
         tone.freshlyAllocated = false;
+
+        // BreakBox 6B: multiSample instruments use a per-pitch wave. Resolve it
+        // here so the chip synth functions read the right sample for this tone.
+        if (instrument.type == InstrumentType.multiSample) {
+            const resolvedWaveIndex: number = instrument.getSampleChipWaveIndex(tone.pitches[0]);
+            tone.wave = instrument.aliases ? Config.rawChipWaves[resolvedWaveIndex].samples : Config.chipWaves[resolvedWaveIndex].samples;
+        }
 
         for (let i: number = 0; i < Config.maxPitchOrOperatorCount; i++) {
             tone.phaseDeltas[i] = 0.0;
@@ -5172,8 +5188,8 @@ export class Synth {
             if (instrument.type == InstrumentType.noise) {
                 settingsExpressionMult *= Config.chipNoises[instrument.chipNoise].expression;
             }
-            if (instrument.type == InstrumentType.chip) {
-                settingsExpressionMult *= Config.chipWaves[instrument.chipWave].expression;
+            if (instrument.type == InstrumentType.chip || instrument.type == InstrumentType.multiSample) {
+                settingsExpressionMult *= Config.chipWaves[instrument.getSampleChipWaveIndex(tone.pitches[0])].expression;
             }
             if (instrument.type == InstrumentType.pwm) {
                 const basePulseWidth: number = getPulseWidthRatio(instrument.pulseWidth);
@@ -5588,7 +5604,7 @@ export class Synth {
 
             }
             return Synth.fmSynthFunctionCache[fingerprint];
-        } else if (instrument.type == InstrumentType.chip) {
+        } else if (instrument.type == InstrumentType.chip || instrument.type == InstrumentType.multiSample) {
             // advloop addition
             if (instrument.isUsingAdvancedLoopControls) {
                 return Synth.loopableChipSynth;
@@ -5685,11 +5701,10 @@ export class Synth {
             let chipSource: string = "return (synth, bufferIndex, roundedSamplesPerTick, tone, instrumentState) => {";
 
 
-            chipSource += `
-            const aliases = (effectsIncludeDistortion(instrumentState.effects) && instrumentState.aliases);
+            chipSource += `\n            const aliases = (effectsIncludeDistortion(instrumentState.effects) && instrumentState.aliases);
             // const aliases = false;
             const data = synth.tempMonoInstrumentSampleBuffer;
-            const wave = instrumentState.wave;
+            const wave = (tone.wave != null) ? tone.wave : instrumentState.wave;
             const volumeScale = instrumentState.volumeScale;
             const waveLength = (aliases && instrumentState.type == 8) ? wave.length : wave.length - 1;
 
@@ -6049,10 +6064,9 @@ export class Synth {
             let chipSource: string = "return (synth, bufferIndex, roundedSamplesPerTick, tone, instrumentState) => {";
 
 
-            chipSource += `
-        const aliases = (effectsIncludeDistortion(instrumentState.effects) && instrumentState.aliases);
+            chipSource += `\n        const aliases = (effectsIncludeDistortion(instrumentState.effects) && instrumentState.aliases);
         const data = synth.tempMonoInstrumentSampleBuffer;
-        const wave = instrumentState.wave;
+        const wave = (tone.wave != null) ? tone.wave : instrumentState.wave;
         const volumeScale = instrumentState.volumeScale;
 
         const waveLength = (aliases && instrumentState.type == 8) ? wave.length : wave.length - 1;

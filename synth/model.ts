@@ -1258,6 +1258,27 @@ export class Instrument {
     // BreakBox: when enabled, custom samples play at their original speed
     // regardless of the pitch shift / detune settings (no chipmunk effect).
     public samplePitchLock: boolean = false;
+    // BreakBox 6B: per-pitch custom sample assignment for the multiSample type.
+    // Maps MIDI pitch number -> custom sample index (into EditorConfig.customSamples).
+    // The i-th custom sample URL becomes chip wave firstIndexForSamplesInChipWaveList + i.
+    public sampleMap: Map<number, number> = new Map<number, number>();
+
+    // Resolves the chip wave index to use for a given pitch. For multiSample
+    // instruments, looks up the per-pitch assignment (custom-sample URL-list
+    // index -> chip wave index via Song.customSampleChipWaveIndices); falls
+    // back to the instrument's default chipWave when unassigned.
+    public getSampleChipWaveIndex(pitch: number): number {
+        if (this.type == InstrumentType.multiSample && this.sampleMap.size > 0) {
+            const sampleIndex: number | undefined = this.sampleMap.get(pitch);
+            if (sampleIndex !== undefined) {
+                const chipWaveIndex: number | undefined = Song.customSampleChipWaveIndices[sampleIndex];
+                if (chipWaveIndex !== undefined) {
+                    return chipWaveIndex;
+                }
+            }
+        }
+        return this.chipWave;
+    }
     public vibrato: number = 0;
     public interval: number = 0;
     public vibratoDepth: number = 0;
@@ -1587,6 +1608,17 @@ export class Instrument {
                 this.pulseWidth = Config.pulseWidthRange - 1;
                 this.decimalOffset = 0;
                 break;
+            case InstrumentType.multiSample:
+                this.chipWave = 2;
+                this.sampleMap.clear();
+                this.chord = Config.chords.dictionary["arpeggio"].index;
+                this.isUsingAdvancedLoopControls = false;
+                this.chipWaveLoopStart = 0;
+                this.chipWaveLoopEnd = Config.rawRawChipWaves[this.chipWave].samples.length - 1;
+                this.chipWaveLoopMode = 0;
+                this.chipWavePlayBackwards = false;
+                this.chipWaveStartOffset = 0;
+                break;
             default:
                 throw new Error("Unrecognized instrument type: " + type);
         }
@@ -1739,6 +1771,16 @@ export class Instrument {
         if (this.samplePitchLock) {
             instrumentObject["samplePitchLock"] = true;
         }
+        if (this.sampleMap.size > 0) {
+            // sampleMap stores custom-sample indices (stable across loads — the
+            // i-th URL in EditorConfig.customSamples becomes chip wave
+            // firstIndexForSamplesInChipWaveList + i).
+            const sampleMapObject: { [pitch: string]: number } = {};
+            for (const [pitch, sampleIndex] of this.sampleMap) {
+                sampleMapObject[pitch + ""] = sampleIndex;
+            }
+            instrumentObject["sampleMap"] = sampleMapObject;
+        }
         if (effectsIncludeVibrato(this.effects)) {
             if (this.vibrato == -1) {
                 this.vibrato = 5;
@@ -1869,7 +1911,7 @@ export class Instrument {
                     "spectrum": spectrum,
                 };
             }
-        } else if (this.type == InstrumentType.chip) {
+        } else if (this.type == InstrumentType.chip || this.type == InstrumentType.multiSample) {
             instrumentObject["wave"] = Config.chipWaves[this.chipWave].name;
             // should this unison pushing code be turned into a function..?
             instrumentObject["unison"] = this.unison == Config.unisons.length ? "custom" : Config.unisons[this.unison].name;
@@ -2174,6 +2216,13 @@ export class Instrument {
         if (instrumentObject["samplePitchLock"] != undefined) {
             this.samplePitchLock = Boolean(instrumentObject["samplePitchLock"]);
         }
+        if (instrumentObject["sampleMap"] != undefined) {
+            this.sampleMap.clear();
+            for (const pitch of Object.keys(instrumentObject["sampleMap"])) {
+                const sampleIndex: number = +instrumentObject["sampleMap"][pitch];
+                this.sampleMap.set(parseIntWithDefault(pitch, 0), sampleIndex);
+            }
+        }
 
         this.vibrato = Config.vibratos.dictionary["none"].index; // default value.
         const vibratoProperty: any = instrumentObject["vibrato"] || instrumentObject["effect"]; // The vibrato property was previously called "effect", not to be confused with the current "effects".
@@ -2405,7 +2454,7 @@ export class Instrument {
             }
         }
 
-        if (this.type == InstrumentType.chip) {
+        if (this.type == InstrumentType.chip || this.type == InstrumentType.multiSample) {
             const legacyWaveNames: Dictionary<number> = { "triangle": 1, "square": 2, "pulse wide": 3, "pulse narrow": 4, "sawtooth": 5, "double saw": 6, "double pulse": 7, "spiky": 8, "plateau": 0 };
             const modboxWaveNames: Dictionary<number> = { "10% pulse": 22, "sunsoft bass": 23, "loud pulse": 24, "sax": 25, "guitar": 26, "atari bass": 28, "atari pulse": 29, "1% pulse": 30, "curved sawtooth": 31, "viola": 32, "brass": 33, "acoustic bass": 34, "lyre": 35, "ramp pulse": 36, "piccolo": 37, "squaretooth": 38, "flatline": 39, "pnryshk a (u5)": 40, "pnryshk b (riff)": 41 };
             const sandboxWaveNames: Dictionary<number> = { "shrill lute": 42, "shrill bass": 44, "nes pulse": 45, "saw bass": 46, "euphonium": 47, "shrill pulse": 48, "r-sawtooth": 49, "recorder": 50, "narrow saw": 51, "deep square": 52, "ring pulse": 53, "double sine": 54, "contrabass": 55, "double bass": 56 };
@@ -2926,6 +2975,10 @@ export class Song {
     //also "u" is ultrabox lol
     // private static readonly _variant = 0x73; //"S" - Slarmoo's Box
     private static readonly _variant = 0x4a; //"J" is for JukeBox
+
+    // BreakBox 6B: maps custom-sample URL-list index -> chipWave index, built
+    // during sample loading. Used to resolve per-pitch sample assignments.
+    public static customSampleChipWaveIndices: number[] = [];
 
     public title: string;
     public scale: number;
@@ -3531,6 +3584,15 @@ export class Song {
                 if (instrument.samplePitchLock) {
                     buffer.push(SongTagCode.samplePitchLock, base64IntToCharCode[1]);
                 }
+                // BreakBox 6B: per-pitch custom sample assignments.
+                // Each entry: pitch (2 chars, 12 bits) + custom sample index (1 char).
+                // The i-th custom sample URL becomes chip wave firstIndexForSamplesInChipWaveList + i.
+                if (instrument.sampleMap.size > 0) {
+                    buffer.push(SongTagCode.sampleMap, base64IntToCharCode[instrument.sampleMap.size]);
+                    for (const [pitch, sampleIndex] of instrument.sampleMap) {
+                        buffer.push(base64IntToCharCode[pitch >> 6], base64IntToCharCode[pitch & 0x3f], base64IntToCharCode[sampleIndex & 0x3f]);
+                    }
+                }
 
                 if (instrument.type != InstrumentType.drumset) {
                     buffer.push(SongTagCode.fadeInOut, base64IntToCharCode[instrument.fadeIn], base64IntToCharCode[instrument.fadeOut]);
@@ -3547,7 +3609,7 @@ export class Song {
                     harmonicsBits.encodeBase64(buffer);
                 }
 
-                if (instrument.type == InstrumentType.chip) {
+                if (instrument.type == InstrumentType.chip || instrument.type == InstrumentType.multiSample) {
                     if (instrument.chipWave > 186) {
                         buffer.push(119, base64IntToCharCode[instrument.chipWave - 186]);
                         buffer.push(base64IntToCharCode[3]);
@@ -5322,6 +5384,18 @@ export class Song {
                 const instrument: Instrument = this.channels[instrumentChannelIterator].instruments[instrumentIndexIterator];
                 instrument.samplePitchLock = base64CharCodeToInt[compressed.charCodeAt(charIndex++)] != 0;
             } break;
+            case SongTagCode.sampleMap: {
+                // BreakBox 6B: per-pitch custom sample assignments.
+                // count (1 char), then per entry: pitch (2 chars) + sample index (1 char).
+                const instrument: Instrument = this.channels[instrumentChannelIterator].instruments[instrumentIndexIterator];
+                const sampleCount: number = base64CharCodeToInt[compressed.charCodeAt(charIndex++)];
+                instrument.sampleMap.clear();
+                for (let i: number = 0; i < sampleCount; i++) {
+                    const pitch: number = (base64CharCodeToInt[compressed.charCodeAt(charIndex++)] << 6) | base64CharCodeToInt[compressed.charCodeAt(charIndex++)];
+                    const sampleIndex: number = base64CharCodeToInt[compressed.charCodeAt(charIndex++)] & 0x3f;
+                    instrument.sampleMap.set(pitch, sampleIndex);
+                }
+            } break;
             case SongTagCode.volume: {
                 if (beforeThree && fromBeepBox) {
                     const channelIndex: number = base64CharCodeToInt[compressed.charCodeAt(charIndex++)];
@@ -6321,6 +6395,8 @@ export class Song {
         // This depends on `Config.chipWaves` being the same
         // length as `Config.rawRawChipWaves`.
         const chipWaveIndex: number = Config.chipWaves.length;
+        // BreakBox 6B: record URL-list index -> chipWave index for per-pitch resolution.
+        Song.customSampleChipWaveIndices[customSampleUrlIndex] = chipWaveIndex;
 
         let urlSliced: string = url;
 
@@ -6577,6 +6653,8 @@ export class Song {
         Config.chipWaves = toNameMap(Config.chipWaves.slice(0, Config.firstIndexForSamplesInChipWaveList));
         Config.rawChipWaves = toNameMap(Config.rawChipWaves.slice(0, Config.firstIndexForSamplesInChipWaveList));
         Config.rawRawChipWaves = toNameMap(Config.rawRawChipWaves.slice(0, Config.firstIndexForSamplesInChipWaveList));
+        // BreakBox 6B: clear the URL-index -> chipWaveIndex mapping; it is rebuilt on load.
+        Song.customSampleChipWaveIndices = [];
     }
 
     private static _clearSamples(): void {

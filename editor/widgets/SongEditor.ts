@@ -54,6 +54,7 @@ import { oscilloscopeCanvas } from "../../global/Oscilloscope";
 import { VisualLoopControlsPrompt } from "../prompts/VisualLoopControlsPrompt";
 import { SampleLoadingStatusPrompt } from "../prompts/SampleLoadingStatusPrompt";
 import { AddSamplesPrompt } from "../prompts/AddSamplesPrompt";
+import { SampleMapPrompt } from "../prompts/SampleMapPrompt";
 import { ShortenerConfigPrompt } from "../prompts/ShortenerConfigPrompt";
 
 const { button, div, input, select, span, optgroup, option, canvas } = HTML;
@@ -94,6 +95,7 @@ function buildPresetOptions(isNoise: boolean, idSet: string): HTMLSelectElement 
         menu.appendChild(option({ value: InstrumentType.supersaw }, EditorConfig.valueToPreset(InstrumentType.supersaw)!.name));
         menu.appendChild(option({ value: InstrumentType.fm }, EditorConfig.valueToPreset(InstrumentType.fm)!.name));
         menu.appendChild(option({ value: InstrumentType.fm6op }, EditorConfig.instrumentToPreset(InstrumentType.fm6op)!.name));
+        menu.appendChild(option({ value: InstrumentType.multiSample }, EditorConfig.instrumentToPreset(InstrumentType.multiSample)!.name));
         menu.appendChild(option({ value: InstrumentType.harmonics }, EditorConfig.valueToPreset(InstrumentType.harmonics)!.name));
         menu.appendChild(option({ value: InstrumentType.pickedString }, EditorConfig.valueToPreset(InstrumentType.pickedString)!.name));
         menu.appendChild(option({ value: InstrumentType.spectrum }, EditorConfig.valueToPreset(InstrumentType.spectrum)!.name));
@@ -1006,6 +1008,8 @@ export class SongEditor {
     ), this._detuneSlider.container);
     private readonly _samplePitchLockBox: HTMLInputElement = input({ type: "checkbox", style: "width: 1em; padding: 0; margin-right: 4em;" });
     private readonly _samplePitchLockRow: HTMLDivElement = div({ class: "selectRow" }, span({ class: "tip", onclick: () => this._openPrompt("samplePitchLock") }, "Pitch Lock Sample:"), this._samplePitchLockBox);
+    private readonly _sampleMapButton: HTMLButtonElement = button({ class: "tip", style: "width: 100%;", onclick: () => this._openPrompt("sampleMap") }, "Sample Map...");
+    private readonly _sampleMapRow: HTMLDivElement = div({ class: "selectRow" }, span({ class: "tip", onclick: () => this._openPrompt("sampleMap") }, "Per-Note Samples:"), this._sampleMapButton);
     private readonly _distortionSlider: Slider = new Slider(input({ style: "margin: 0; position: sticky;", type: "range", min: "0", max: Config.distortionRange - 1, value: "0", step: "1" }), this.doc, (oldValue: number, newValue: number) => new ChangeDistortion(this.doc, oldValue, newValue), false);
     private readonly _distortionRow: HTMLDivElement = div({ class: "selectRow" }, span({ class: "tip", onclick: () => this._openPrompt("distortion") }, "Distortion:"), this._distortionSlider.container);
     private readonly _aliasingBox: HTMLInputElement = input({ type: "checkbox", style: "width: 1em; padding: 0; margin-right: 4em;" });
@@ -1238,6 +1242,7 @@ export class SongEditor {
         this._pitchShiftRow,
         this._detuneSliderRow,
         this._samplePitchLockRow,
+        this._sampleMapRow,
         this._vibratoSelectRow,
         this._vibratoDropdownGroup,
         this._noteFilterTypeRow,
@@ -2293,6 +2298,9 @@ export class SongEditor {
                 case "addExternal":
                     this.prompt = new AddSamplesPrompt(this.doc);
                     break;
+                case "sampleMap":
+                    this.prompt = new SampleMapPrompt(this.doc);
+                    break;
                 case "generateEuclideanRhythm":
                     this.prompt = new EuclideanRhythmPrompt(this.doc);
                     break;
@@ -2910,6 +2918,12 @@ export class SongEditor {
                 this._samplePitchLockBox.checked = instrument.samplePitchLock;
             } else {
                 this._samplePitchLockRow.style.display = "none";
+            }
+            // BreakBox 6B: per-note sample map — only for multiSample instruments.
+            if (instrument.type == InstrumentType.multiSample) {
+                this._sampleMapRow.style.display = "";
+            } else {
+                this._sampleMapRow.style.display = "none";
             }
 
             if (effectsIncludeVibrato(instrument.effects)) {

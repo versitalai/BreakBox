@@ -108,6 +108,7 @@ export const enum SongTagCode {
     loopControls = CharCode.y, // added in BeepBox URL version 7, DEPRECATED, [UB] repurposed for chip wave loop controls
     drumsetEnvelopes = CharCode.z, // added in BeepBox URL version 7 for filter envelopes, still used for drumset envelopes
     samplePitchLock = CharCode.J, // added in BreakBox: per-instrument flag to keep custom samples at their original speed (ignore pitch shift/detune)
+    sampleMap = CharCode.K, // added in BreakBox 6B: per-pitch custom sample assignments (multiSample instrument)
     algorithm = CharCode.A, // added in BeepBox URL version 6
     feedbackAmplitude = CharCode.B, // added in BeepBox URL version 6
     chord = CharCode.C, // added in BeepBox URL version 7, DEPRECATED
