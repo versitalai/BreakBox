@@ -57,6 +57,7 @@ import { AddSamplesPrompt } from "../prompts/AddSamplesPrompt";
 import { SampleMapPrompt } from "../prompts/SampleMapPrompt";
 import { NoteGenerativePrompt } from "../prompts/NoteGenerativePrompt";
 import { ChaosPrompt } from "../prompts/ChaosPrompt";
+import { HumanizePrompt } from "../prompts/HumanizePrompt";
 import { ShortenerConfigPrompt } from "../prompts/ShortenerConfigPrompt";
 
 const { button, div, input, select, span, optgroup, option, canvas } = HTML;
@@ -2315,6 +2316,9 @@ export class SongEditor {
                 }
                 case "chaos":
                     this.prompt = new ChaosPrompt(this.doc);
+                    break;
+                case "humanize":
+                    this.prompt = new HumanizePrompt(this.doc);
                     break;
                 case "generateEuclideanRhythm":
                     this.prompt = new EuclideanRhythmPrompt(this.doc);
@@ -4607,6 +4611,12 @@ export class SongEditor {
                 break;
             case 72: // h
                 if (canPlayNotes) break;
+                // BreakBox Phase 5: Ctrl+Shift+H opens Humanize (swing/jitter).
+                if ((event.ctrlKey || event.metaKey) && event.shiftKey) {
+                    this._openPrompt("humanize");
+                    event.preventDefault();
+                    break;
+                }
 
                 if (needControlForShortcuts == (event.ctrlKey || event.metaKey)) {
 

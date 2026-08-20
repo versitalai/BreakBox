@@ -151,6 +151,14 @@ export class TipPrompt implements Prompt {
 					p("Set an amount to 0 to leave that property untouched. Press Ctrl+K to open."),
 				);
 			} break;
+			case "humanize": {
+				message = div(
+					h2("Humanize"),
+					p("Add swing and human-feel jitter to the notes inside the current selection."),
+					p("Swing: pushes every off-beat note later by a percentage of half a beat — classic shuffled feel for breaks and grooves."),
+					p("Timing: random start shift up to ±N parts. Velocity: random volume change up to ±N. Press Ctrl+Shift+H to open."),
+				);
+			} break;
 			case "instrumentTags": {
 				message = div(
 					h2("Instrument Tags"),

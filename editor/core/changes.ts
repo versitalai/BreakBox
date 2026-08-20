@@ -5148,6 +5148,77 @@ export class ChangePatternSelection extends UndoableChange {
     }
 }
 
+// BreakBox Phase 5: Humanize — swing + random timing/velocity on selected notes.
+// Swing shifts every other 8th note later by a percentage of the step duration;
+// random timing/velocity add human-feel jitter.
+export class ChangeHumanizeSelectedNotes extends ChangeSequence {
+    constructor(doc: SongDocument, pattern: Pattern, swingPercent: number, randomTiming: number, randomVelocity: number) {
+        super();
+
+        const start: number = doc.selection.patternSelectionActive ? doc.selection.patternSelectionStart : 0;
+        const end: number = doc.selection.patternSelectionActive ? doc.selection.patternSelectionEnd : doc.song.beatsPerBar * Config.partsPerBeat;
+        if (end <= start) return;
+
+        const selected: Note[] = [];
+        for (const note of pattern.notes) {
+            if (note.end > start && note.start < end) {
+                selected.push(note);
+            }
+        }
+        if (selected.length === 0) return;
+
+        // The swing grid: half a beat in parts. Parts per beat depends on rhythm.
+        const partsPerBeat: number = Config.partsPerBeat;
+        const halfBeatParts: number = partsPerBeat / 2;
+        const maxSize: number = Config.noteSizeMax;
+
+        for (const note of selected) {
+            const clone: Note = note.clone(true);
+            let changed: boolean = false;
+
+            // Swing: notes that start on an off-beat (the second half of a beat,
+            // i.e. start % partsPerBeat >= halfBeatParts) get pushed later.
+            if (swingPercent > 0) {
+                const offsetWithinBeat: number = ((clone.start % partsPerBeat) + partsPerBeat) % partsPerBeat;
+                if (offsetWithinBeat >= halfBeatParts - 0.001) {
+                    const swingShift: number = Math.max(0, Math.round(halfBeatParts * swingPercent / 100));
+                    if (swingShift > 0) {
+                        clone.start += swingShift;
+                        clone.end += swingShift;
+                        changed = true;
+                    }
+                }
+            }
+
+            if (randomTiming > 0) {
+                const jitter: number = Math.round((Math.random() * 2 - 1) * randomTiming);
+                if (jitter !== 0) {
+                    clone.start = Math.max(0, Math.min(doc.song.beatsPerBar * Config.partsPerBeat - 1, clone.start + jitter));
+                    clone.end = Math.max(clone.start + 1, clone.end + jitter);
+                    changed = true;
+                }
+            }
+
+            if (randomVelocity > 0) {
+                for (let i: number = 0; i < clone.pins.length; i++) {
+                    const delta: number = Math.round((Math.random() * 2 - 1) * randomVelocity);
+                    const newSize: number = Math.max(1, Math.min(maxSize, clone.pins[i].size + delta));
+                    if (newSize !== clone.pins[i].size) {
+                        clone.pins[i] = makeNotePin(clone.pins[i].interval, clone.pins[i].time, newSize);
+                        changed = true;
+                    }
+                }
+            }
+
+            if (changed) {
+                const index: number = pattern.notes.indexOf(note);
+                this.append(new ChangeNoteAdded(doc, pattern, note, index, true));
+                this.append(new ChangeNoteAdded(doc, pattern, clone, index, false));
+            }
+        }
+    }
+}
+
 // BreakBox Phase 4: Chaos tool — randomize pitch/timing/velocity of selected notes.
 export class ChangeRandomizeSelectedNotes extends ChangeSequence {
     constructor(doc: SongDocument, pattern: Pattern, pitchAmount: number, timeAmount: number, velocityAmount: number) {
