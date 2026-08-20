@@ -1,4 +1,4 @@
-import { ColorConfig } from "../editor/ColorConfig";
+import { ColorConfig } from "../editor/core/ColorConfig";
 import { events } from "./Events";
 
 export class oscilloscopeCanvas {

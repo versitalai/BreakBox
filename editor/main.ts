@@ -1,14 +1,15 @@
+// cross-ref: interacts with editor/core/{ColorConfig, EditorConfig, changes, style}; editor/model/{SongDocument}; editor/prompts/{ExportPrompt}; editor/widgets/{SongEditor}; synth/{SynthConfig, synth}
 // Copyright (c) 2012-2022 John Nesky and contributing authors, distributed under the MIT license, see accompanying the LICENSE.md file.
 
 import { Dictionary, DictionaryArray, EnvelopeType, InstrumentType, Transition, Chord, Envelope, Config } from "../synth/SynthConfig";
-import { isMobile, EditorConfig } from "./EditorConfig";
-import { ColorConfig } from "./ColorConfig";
-import "./style"; // Import for the side effects, there's no exports.
-import { SongEditor } from "./SongEditor";
+import { isMobile, EditorConfig } from "./core/EditorConfig";
+import { ColorConfig } from "./core/ColorConfig";
+import "./core/style"; // Import for the side effects, there's no exports.
+import { SongEditor } from "./widgets/SongEditor";
 import { NotePin, Note, Pattern, Instrument, Channel, Song, Synth } from "../synth/synth";
-import { SongDocument } from "./SongDocument";
-import { ExportPrompt } from "./ExportPrompt";
-import { ChangePreset } from "./changes";
+import { SongDocument } from "./model/SongDocument";
+import { ExportPrompt } from "./prompts/ExportPrompt";
+import { ChangePreset } from "./core/changes";
 
 
 //namespace beepbox {
