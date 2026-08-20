@@ -4757,6 +4757,41 @@ export class ChangeSongReverb extends Change {
     }
 }
 
+// BreakBox Phase 3: per-note generative settings (probability, rollCount).
+export class ChangeNoteGenerative extends UndoableChange {
+    private _doc: SongDocument | null;
+    private _note: Note;
+    private _oldProbability: number;
+    private _oldRollCount: number;
+    private _newProbability: number;
+    private _newRollCount: number;
+    constructor(doc: SongDocument | null, pattern: Pattern, note: Note, newProbability: number, newRollCount: number) {
+        super(false);
+        this._doc = doc;
+        this._note = note;
+        this._oldProbability = note.probability;
+        this._oldRollCount = note.rollCount;
+        this._newProbability = newProbability;
+        this._newRollCount = newRollCount;
+        if (this._oldProbability != this._newProbability || this._oldRollCount != this._newRollCount) {
+            this._didSomething();
+        }
+        this.redo();
+    }
+
+    protected _doForwards(): void {
+        this._note.probability = this._newProbability;
+        this._note.rollCount = this._newRollCount;
+        if (this._doc != null) this._doc.notifier.changed();
+    }
+
+    protected _doBackwards(): void {
+        this._note.probability = this._oldProbability;
+        this._note.rollCount = this._oldRollCount;
+        if (this._doc != null) this._doc.notifier.changed();
+    }
+}
+
 export class ChangeNoteAdded extends UndoableChange {
     private _doc: SongDocument;
     private _pattern: Pattern;

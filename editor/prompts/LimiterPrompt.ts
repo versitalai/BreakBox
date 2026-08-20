@@ -83,6 +83,11 @@ export class LimiterCanvas {
     }
 
     public animateVolume(inVolumeCap: number, historicInCap: number, outVolumeCap: number, historicOutCap: number): void {
+        // Guard against NaN when the audio engine hasn't produced a volume yet.
+        if (!isFinite(inVolumeCap) || inVolumeCap < 0) inVolumeCap = 0;
+        if (!isFinite(historicInCap) || historicInCap < 0) historicInCap = 0;
+        if (!isFinite(outVolumeCap) || outVolumeCap < 0) outVolumeCap = 0;
+        if (!isFinite(historicOutCap) || historicOutCap < 0) historicOutCap = 0;
         this._inVolumeBar.setAttribute("width", "" + Math.min(this._editorWidth, inVolumeCap * (this._editorWidth / 2.0)));
         this._inVolumeCap.setAttribute("x", "" + Math.min(this._editorWidth, historicInCap * (this._editorWidth / 2.0)));
         this._outVolumeBar.setAttribute("width", "" + Math.min(this._editorWidth, outVolumeCap * (this._editorWidth / 2.0)));

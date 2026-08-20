@@ -133,6 +133,15 @@ export class TipPrompt implements Prompt {
 					p("Load samples first via Add Samples, then assign them here. Pitches left on \"default\" use the instrument's base chip wave."),
 				);
 			} break;
+			case "noteGenerative": {
+				message = div(
+					h2("Note Generative Settings"),
+					p("Per-note generative controls for adding human feel and rhythm variation."),
+					p("Probability: percent chance the note triggers each bar. 100% always plays; lower values make it drop out randomly (deterministic per bar, so it won't flicker mid-note)."),
+					p("Roll count: how many times the note repeats within its duration — like a drum roll. The note re-triggers at even intervals inside its length."),
+					p("Hover over a note and press Ctrl+G to edit these settings."),
+				);
+			} break;
 			case "instrumentTags": {
 				message = div(
 					h2("Instrument Tags"),

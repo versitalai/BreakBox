@@ -170,6 +170,16 @@ export class PatternEditor {
     private _renderedNoteRangeHighestNoteLimit: number = -1;
     private _followPlayheadBar: number = -1;
 
+    // BreakBox Phase 3: expose the current pattern and hovered note for
+    // per-note generative settings (probability / rollCount).
+    public getCurrentPattern(): Pattern | null {
+        return this._pattern;
+    }
+
+    public getHoveredNote(): Note | null {
+        return this._cursor.curNote;
+    }
+
     constructor(private _doc: SongDocument, private _interactive: boolean, private _barOffset: number) {
         this._svgNoteBackground = SVG.pattern({ id: "patternEditorNoteBackground" + this._barOffset, x: "0", y: "0", patternUnits: "userSpaceOnUse" });
         this._svgDrumBackground = SVG.pattern({ id: "patternEditorDrumBackground" + this._barOffset, x: "0", y: "0", patternUnits: "userSpaceOnUse" });

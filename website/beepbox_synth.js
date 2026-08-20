@@ -9069,6 +9069,7 @@ var beepbox = (function (exports) {
                 let note = null;
                 let prevNote = null;
                 let nextNote = null;
+                let rollIntervalParts = 0;
                 if (playSong && pattern != null && !channel.muted && (!this.isRecording || this.liveInputChannel != channelIndex)) {
                     for (let i = 0; i < pattern.notes.length; i++) {
                         if (pattern.notes[i].end <= currentPart) {
@@ -9083,10 +9084,23 @@ var beepbox = (function (exports) {
                         }
                     }
                     if (note != null) {
+                        if (note.probability < 100) {
+                            const seed = (this.bar * 73856093) ^ (channelIndex * 19349663) ^ (note.start * 83492791) ^ ((note.noteId !== -1 ? note.noteId : note.pitches[0] * 7) * 2654435761);
+                            const rolled = ((seed ^ (seed >>> 13)) >>> 0) % 100;
+                            if (rolled >= note.probability) {
+                                note = null;
+                            }
+                        }
+                    }
+                    if (note != null) {
                         if (prevNote != null && prevNote.end != note.start)
                             prevNote = null;
                         if (nextNote != null && nextNote.start != note.end)
                             nextNote = null;
+                    }
+                    if (note != null && note.rollCount > 1) {
+                        const noteDuration = note.end - note.start;
+                        rollIntervalParts = noteDuration / note.rollCount;
                     }
                 }
                 if (pattern != null && (!song.layeredInstruments || channel.instruments.length == 1 || (song.patternInstruments && pattern.instruments.length == 1))) {
@@ -9160,7 +9174,8 @@ var beepbox = (function (exports) {
                         if (effectsIncludeNoteRange(instrument.effects))
                             filteredPitches = note.pitches.filter(pitch => pitch >= instrument.lowerNoteLimit && pitch <= instrument.upperNoteLimit);
                         if (chord.singleTone && !(filteredPitches.length <= 0)) {
-                            const atNoteStart = (Config.ticksPerPart * note.start == currentTick);
+                            const isRollBoundary = rollIntervalParts > 0 && note.start < currentPart && (((currentPart - note.start) % rollIntervalParts) == 0);
+                            const atNoteStart = (Config.ticksPerPart * note.start == currentTick) || isRollBoundary;
                             let tone;
                             if (toneList.count() <= toneCount) {
                                 tone = this.newTone();
@@ -9235,7 +9250,8 @@ var beepbox = (function (exports) {
                                 if ((!transition.continues && !forceContinueAtStart) || prevNoteForThisTone == null) {
                                     strumOffsetParts += chord.strumParts;
                                 }
-                                const atNoteStart = (Config.ticksPerPart * noteStartPart == currentTick);
+                                const isRollBoundary = rollIntervalParts > 0 && noteForThisTone.start < currentPart && (((currentPart - noteForThisTone.start) % rollIntervalParts) == 0);
+                                const atNoteStart = (Config.ticksPerPart * noteStartPart == currentTick) || isRollBoundary;
                                 let tone;
                                 if (this.tempMatchedPitchTones[toneCount] != null) {
                                     tone = this.tempMatchedPitchTones[toneCount];
@@ -12800,6 +12816,8 @@ var beepbox = (function (exports) {
         constructor(pitch, start, end, size, fadeout = false, noteId = -1, layer = 0) {
             this.noteId = -1;
             this.layer = 0;
+            this.probability = 100;
+            this.rollCount = 1;
             this.pitches = [pitch];
             this.pins = [makeNotePin(0, 0, size), makeNotePin(0, end - start, fadeout ? 0 : size)];
             this.start = start;
@@ -12842,6 +12860,8 @@ var beepbox = (function (exports) {
                 newNote.pins.push(makeNotePin(pin.interval, pin.time, pin.size));
             }
             newNote.continuesLastPattern = this.continuesLastPattern;
+            newNote.probability = this.probability;
+            newNote.rollCount = this.rollCount;
             return newNote;
         }
         getEndPinIndex(part) {
@@ -12903,6 +12923,12 @@ var beepbox = (function (exports) {
                 }
                 if (note.layer !== 0) {
                     noteObject["layer"] = note.layer;
+                }
+                if (note.probability !== 100) {
+                    noteObject["probability"] = note.probability;
+                }
+                if (note.rollCount !== 1) {
+                    noteObject["rollCount"] = note.rollCount;
                 }
                 if (note.start == 0) {
                     noteObject["continuesLastPattern"] = note.continuesLastPattern;
@@ -13030,6 +13056,12 @@ var beepbox = (function (exports) {
                     }
                     if (noteObject["layer"] !== undefined) {
                         note.layer = noteObject["layer"] | 0;
+                    }
+                    if (noteObject["probability"] !== undefined) {
+                        note.probability = clamp(0, 101, noteObject["probability"] | 0);
+                    }
+                    if (noteObject["rollCount"] !== undefined) {
+                        note.rollCount = clamp(1, 17, noteObject["rollCount"] | 0);
                     }
                     if ((format != "ultrabox" && format != "slarmoosbox") && instrument.modulators[mod] == Config.modulators.dictionary["tempo"].index) {
                         for (const pin of note.pins) {
@@ -16355,6 +16387,44 @@ var beepbox = (function (exports) {
             buffer.push(base64IntToCharCode[digits.length]);
             Array.prototype.push.apply(buffer, digits);
             bits.encodeBase64(buffer);
+            let hasNoteMetadata = false;
+            for (let channelIndex = 0; channelIndex < this.getChannelCount() && !hasNoteMetadata; channelIndex++) {
+                for (const pattern of this.channels[channelIndex].patterns) {
+                    for (const note of pattern.notes) {
+                        if (note.probability !== 100 || note.rollCount !== 1) {
+                            hasNoteMetadata = true;
+                            break;
+                        }
+                    }
+                    if (hasNoteMetadata)
+                        break;
+                }
+            }
+            if (hasNoteMetadata) {
+                buffer.push(89);
+                const metaBits = new BitFieldWriter();
+                for (let channelIndex = 0; channelIndex < this.getChannelCount(); channelIndex++) {
+                    for (const pattern of this.channels[channelIndex].patterns) {
+                        for (const note of pattern.notes) {
+                            const hasMeta = (note.probability !== 100 || note.rollCount !== 1);
+                            metaBits.write(1, hasMeta ? 1 : 0);
+                            if (hasMeta) {
+                                metaBits.write(7, note.probability);
+                                metaBits.write(4, note.rollCount - 1);
+                            }
+                        }
+                    }
+                }
+                let metaLength = metaBits.lengthBase64();
+                let metaDigits = [];
+                while (metaLength > 0) {
+                    metaDigits.unshift(base64IntToCharCode[metaLength & 0x3f]);
+                    metaLength = metaLength >> 6;
+                }
+                buffer.push(base64IntToCharCode[metaDigits.length]);
+                Array.prototype.push.apply(buffer, metaDigits);
+                metaBits.encodeBase64(buffer);
+            }
             const maxApplyArgs = 64000;
             let customSamplesStr = "";
             if (EditorConfig.customSamples != undefined && EditorConfig.customSamples.length > 0) {
@@ -18581,6 +18651,30 @@ var beepbox = (function (exports) {
                                                     pattern.notes.push(new Note(Config.modCount - 1 - songReverbIndex, 0, 6, legacyGlobalReverb));
                                                 }
                                             }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        break;
+                    case 89:
+                        {
+                            let metaStringLength = 0;
+                            let metaStringLengthLength = validateRange(1, 4, base64CharCodeToInt[compressed.charCodeAt(charIndex++)]);
+                            while (metaStringLengthLength > 0) {
+                                metaStringLength = metaStringLength << 6;
+                                metaStringLength += base64CharCodeToInt[compressed.charCodeAt(charIndex++)];
+                                metaStringLengthLength--;
+                            }
+                            const metaBits = new BitFieldReader(compressed, charIndex, charIndex + metaStringLength);
+                            charIndex += metaStringLength;
+                            for (let channelIndex = 0; channelIndex < this.getChannelCount(); channelIndex++) {
+                                for (const pattern of this.channels[channelIndex].patterns) {
+                                    for (const note of pattern.notes) {
+                                        const hasMeta = metaBits.read(1) != 0;
+                                        if (hasMeta) {
+                                            note.probability = clamp(0, 101, metaBits.read(7));
+                                            note.rollCount = clamp(1, 17, metaBits.read(4) + 1);
                                         }
                                     }
                                 }

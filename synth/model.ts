@@ -29,6 +29,9 @@ export class Note {
     public continuesLastPattern: boolean;
     public noteId: number = -1; // Unique ID within pattern for individual note control
     public layer: number = 0; // Overlap layer (0 = base, 1+ = overlapping notes)
+    // BreakBox Phase 3: generative per-note metadata.
+    public probability: number = 100; // 0-100% chance of triggering
+    public rollCount: number = 1; // Number of times the note repeats within its duration
 
     public constructor(pitch: number, start: number, end: number, size: number, fadeout: boolean = false, noteId: number = -1, layer: number = 0) {
         this.pitches = [pitch];
@@ -75,6 +78,8 @@ export class Note {
             newNote.pins.push(makeNotePin(pin.interval, pin.time, pin.size));
         }
         newNote.continuesLastPattern = this.continuesLastPattern;
+        newNote.probability = this.probability;
+        newNote.rollCount = this.rollCount;
         return newNote;
     }
 
@@ -141,6 +146,12 @@ export class Pattern {
             }
             if (note.layer !== 0) {
                 noteObject["layer"] = note.layer;
+            }
+            if (note.probability !== 100) {
+                noteObject["probability"] = note.probability;
+            }
+            if (note.rollCount !== 1) {
+                noteObject["rollCount"] = note.rollCount;
             }
             if (note.start == 0) {
                 noteObject["continuesLastPattern"] = note.continuesLastPattern;
@@ -285,6 +296,12 @@ export class Pattern {
                 }
                 if (noteObject["layer"] !== undefined) {
                     note.layer = noteObject["layer"] | 0;
+                }
+                if (noteObject["probability"] !== undefined) {
+                    note.probability = clamp(0, 101, noteObject["probability"] | 0);
+                }
+                if (noteObject["rollCount"] !== undefined) {
+                    note.rollCount = clamp(1, 17, noteObject["rollCount"] | 0);
                 }
 
                 if ((format != "ultrabox" && format != "slarmoosbox") && instrument.modulators[mod] == Config.modulators.dictionary["tempo"].index) {
@@ -4055,6 +4072,49 @@ export class Song {
         Array.prototype.push.apply(buffer, digits); // append digits to buffer.
         bits.encodeBase64(buffer);
 
+        // BreakBox Phase 3: per-note probability + rollCount. Written as a
+        // mirror-walk bitstream in the same channel->pattern->note order the
+        // patterns section uses, so the parser can read it back without any
+        // index encoding. Only written when at least one note differs from the
+        // defaults (probability 100, rollCount 1).
+        let hasNoteMetadata: boolean = false;
+        for (let channelIndex: number = 0; channelIndex < this.getChannelCount() && !hasNoteMetadata; channelIndex++) {
+            for (const pattern of this.channels[channelIndex].patterns) {
+                for (const note of pattern.notes) {
+                    if (note.probability !== 100 || note.rollCount !== 1) {
+                        hasNoteMetadata = true;
+                        break;
+                    }
+                }
+                if (hasNoteMetadata) break;
+            }
+        }
+        if (hasNoteMetadata) {
+            buffer.push(SongTagCode.noteMetadata);
+            const metaBits: BitFieldWriter = new BitFieldWriter();
+            for (let channelIndex: number = 0; channelIndex < this.getChannelCount(); channelIndex++) {
+                for (const pattern of this.channels[channelIndex].patterns) {
+                    for (const note of pattern.notes) {
+                        const hasMeta: boolean = (note.probability !== 100 || note.rollCount !== 1);
+                        metaBits.write(1, hasMeta ? 1 : 0);
+                        if (hasMeta) {
+                            metaBits.write(7, note.probability); // 0-100
+                            metaBits.write(4, note.rollCount - 1); // 1-16 -> 0-15
+                        }
+                    }
+                }
+            }
+            let metaLength: number = metaBits.lengthBase64();
+            let metaDigits: number[] = [];
+            while (metaLength > 0) {
+                metaDigits.unshift(base64IntToCharCode[metaLength & 0x3f]);
+                metaLength = metaLength >> 6;
+            }
+            buffer.push(base64IntToCharCode[metaDigits.length]);
+            Array.prototype.push.apply(buffer, metaDigits);
+            metaBits.encodeBase64(buffer);
+        }
+
         const maxApplyArgs: number = 64000;
         let customSamplesStr = "";
         if (EditorConfig.customSamples != undefined && EditorConfig.customSamples.length > 0) {
@@ -6345,6 +6405,34 @@ export class Song {
                                         pattern.notes.push(new Note(Config.modCount - 1 - songReverbIndex, 0, 6, legacyGlobalReverb));
                                     }
                                 }
+                            }
+                        }
+                    }
+                }
+            } break;
+            case SongTagCode.noteMetadata: {
+                // BreakBox Phase 3: per-note probability + rollCount. Mirror-walk
+                // bitstream in the same channel->pattern->note order as patterns.
+                // 1 bit "has metadata" per note; if set, 7 bits probability + 4 bits
+                // rollCount-1. All patterns are already parsed at this point.
+                let metaStringLength: number = 0;
+                let metaStringLengthLength: number = validateRange(1, 4, base64CharCodeToInt[compressed.charCodeAt(charIndex++)]);
+                while (metaStringLengthLength > 0) {
+                    metaStringLength = metaStringLength << 6;
+                    metaStringLength += base64CharCodeToInt[compressed.charCodeAt(charIndex++)];
+                    metaStringLengthLength--;
+                }
+                const metaBits: BitFieldReader = new BitFieldReader(compressed, charIndex, charIndex + metaStringLength);
+                charIndex += metaStringLength;
+                for (let channelIndex: number = 0; channelIndex < this.getChannelCount(); channelIndex++) {
+                    for (const pattern of this.channels[channelIndex].patterns) {
+                        for (const note of pattern.notes) {
+                            const hasMeta: boolean = metaBits.read(1) != 0;
+                            if (hasMeta) {
+                                // Note: clamp() in this codebase is exclusive of max,
+                                // so pass max+1 (same convention as every other call site).
+                                note.probability = clamp(0, 101, metaBits.read(7));
+                                note.rollCount = clamp(1, 17, metaBits.read(4) + 1);
                             }
                         }
                     }

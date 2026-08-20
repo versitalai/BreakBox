@@ -4217,6 +4217,9 @@ export class Synth {
             let note: Note | null = null;
             let prevNote: Note | null = null;
             let nextNote: Note | null = null;
+            // BreakBox Phase 3: rollCount — sub-interval boundaries within the
+            // note's duration at which the tone re-triggers.
+            let rollIntervalParts: number = 0;
 
             if (playSong && pattern != null && !channel.muted && (!this.isRecording || this.liveInputChannel != channelIndex)) {
                 for (let i: number = 0; i < pattern.notes.length; i++) {
@@ -4231,8 +4234,24 @@ export class Synth {
                 }
 
                 if (note != null) {
+                    // BreakBox Phase 3: probability gate. Deterministic per-bar
+                    // roll so a note is either fully present or fully absent for
+                    // the bar (no mid-note flicker), but re-rolls each bar.
+                    if (note.probability < 100) {
+                        const seed: number = (this.bar * 73856093) ^ (channelIndex * 19349663) ^ (note.start * 83492791) ^ ((note.noteId !== -1 ? note.noteId : note.pitches[0] * 7) * 2654435761);
+                        const rolled: number = ((seed ^ (seed >>> 13)) >>> 0) % 100;
+                        if (rolled >= note.probability) {
+                            note = null;
+                        }
+                    }
+                }
+                if (note != null) {
                     if (prevNote != null && prevNote.end != note.start) prevNote = null;
                     if (nextNote != null && nextNote.start != note.end) nextNote = null;
+                }
+                if (note != null && note.rollCount > 1) {
+                    const noteDuration: number = note.end - note.start;
+                    rollIntervalParts = noteDuration / note.rollCount;
                 }
             }
 
@@ -4310,7 +4329,8 @@ export class Synth {
                     let filteredPitches: number[] = note.pitches;
                     if (effectsIncludeNoteRange(instrument.effects)) filteredPitches = note.pitches.filter(pitch => pitch >= instrument.lowerNoteLimit && pitch <= instrument.upperNoteLimit);
                     if (chord.singleTone && !(filteredPitches.length <= 0)) {
-                        const atNoteStart: boolean = (Config.ticksPerPart * note.start == currentTick);
+                        const isRollBoundary: boolean = rollIntervalParts > 0 && note.start < currentPart && (((currentPart - note.start) % rollIntervalParts) == 0);
+                        const atNoteStart: boolean = (Config.ticksPerPart * note.start == currentTick) || isRollBoundary;
                         let tone: Tone;
                         if (toneList.count() <= toneCount) {
                             tone = this.newTone();
@@ -4392,7 +4412,8 @@ export class Synth {
                                 strumOffsetParts += chord.strumParts;
                             }
 
-                            const atNoteStart: boolean = (Config.ticksPerPart * noteStartPart == currentTick);
+                            const isRollBoundary: boolean = rollIntervalParts > 0 && noteForThisTone.start < currentPart && (((currentPart - noteForThisTone.start) % rollIntervalParts) == 0);
+                            const atNoteStart: boolean = (Config.ticksPerPart * noteStartPart == currentTick) || isRollBoundary;
                             let tone: Tone;
                             if (this.tempMatchedPitchTones[toneCount] != null) {
                                 tone = this.tempMatchedPitchTones[toneCount]!;

@@ -317,6 +317,18 @@ class BreakBoxProcessor extends AudioWorkletProcessor {
     private renderVoice(voice: VoiceState, outputL: Float32Array, outputR: Float32Array, frames: number): void {
         if (!voice.active) return;
 
+        // BreakBox Phase 3: probability gate. Rolled once per note_on (voice
+        // creation) so a note is either fully present or fully silent.
+        if (voice.probability < 1.0) {
+            const seed: number = Math.floor(voice.startTick * 73856093) ^ (voice.pitch * 19349663) ^ (voice.channel * 83492791);
+            const rolled: number = ((seed ^ (seed >>> 13)) >>> 0) % 1000 / 1000;
+            if (rolled >= voice.probability) {
+                voice.active = false;
+                this.freeVoiceIndices.push(this.voices.indexOf(voice));
+                return;
+            }
+        }
+
         const sample = voice.sampleKey ? this.samplePool.get(voice.sampleKey) : null;
         let sampleIndex = 0;
 

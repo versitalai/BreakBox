@@ -16,7 +16,7 @@ import { EditorConfig, isMobile, prettyNumber, Preset, PresetCategory } from "..
 import { EuclideanRhythmPrompt } from "../prompts/EuclidgenRhythmPrompt";
 import { ExportPrompt } from "../prompts/ExportPrompt";
 import "../core/Layout"; // Imported here for the sake of ensuring this code is transpiled early.
-import { Instrument, Channel, Synth } from "../../synth/synth";
+import { Instrument, Channel, Synth, Note } from "../../synth/synth";
 import { HTML, SVG } from "imperative-html/dist/esm/elements-strict";
 import { Preferences } from "../core/Preferences";
 import { HarmonicsEditor, HarmonicsEditorPrompt } from "./HarmonicsEditor";
@@ -55,6 +55,7 @@ import { VisualLoopControlsPrompt } from "../prompts/VisualLoopControlsPrompt";
 import { SampleLoadingStatusPrompt } from "../prompts/SampleLoadingStatusPrompt";
 import { AddSamplesPrompt } from "../prompts/AddSamplesPrompt";
 import { SampleMapPrompt } from "../prompts/SampleMapPrompt";
+import { NoteGenerativePrompt } from "../prompts/NoteGenerativePrompt";
 import { ShortenerConfigPrompt } from "../prompts/ShortenerConfigPrompt";
 
 const { button, div, input, select, span, optgroup, option, canvas } = HTML;
@@ -2301,6 +2302,16 @@ export class SongEditor {
                 case "sampleMap":
                     this.prompt = new SampleMapPrompt(this.doc);
                     break;
+                case "noteGenerative": {
+                    const pattern: any = this._patternEditor.getCurrentPattern();
+                    const note: Note | null = this._patternEditor.getHoveredNote();
+                    if (pattern != null && note != null) {
+                        this.prompt = new NoteGenerativePrompt(this.doc, pattern, note);
+                    } else {
+                        this.doc.openPrompt("noteGenerative");
+                    }
+                    break;
+                }
                 case "generateEuclideanRhythm":
                     this.prompt = new EuclideanRhythmPrompt(this.doc);
                     break;
@@ -4639,6 +4650,13 @@ export class SongEditor {
                     location.reload();
                 }
                 break;
+            case 71: // g — BreakBox Phase 3: per-note generative settings
+                if (canPlayNotes) break;
+                if (needControlForShortcuts == (event.ctrlKey || event.metaKey) && !event.shiftKey) {
+                    this._openPrompt("noteGenerative");
+                    event.preventDefault();
+                }
+                break;
             case 76: // l
                 if (canPlayNotes) break;
                 if (event.shiftKey) {
@@ -5198,6 +5216,10 @@ export class SongEditor {
     }
 
     private _animateVolume(outVolumeCap: number, historicOutCap: number): void {
+        // Guard against NaN when the audio engine hasn't produced a volume yet
+        // (e.g. AudioWorklet init failed and the legacy fallback hasn't started).
+        if (!isFinite(outVolumeCap) || outVolumeCap < 0) outVolumeCap = 0;
+        if (!isFinite(historicOutCap) || historicOutCap < 0) historicOutCap = 0;
         this._outVolumeBar.setAttribute("width", "" + Math.min(144, outVolumeCap * 144));
         this._outVolumeCap.setAttribute("x", "" + (8 + Math.min(144, historicOutCap * 144)));
     }
