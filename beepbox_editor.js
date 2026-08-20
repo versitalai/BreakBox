@@ -14199,10 +14199,12 @@ li.select2-results__option[role=group] > strong:hover {
             }
             if (resized || this._renderedScrollBarPos != this._doc.barScrollPos) {
                 this._renderedScrollBarPos = this._doc.barScrollPos;
-                this._handle.setAttribute("x", String(this._notchSpace * this._doc.barScrollPos));
-                this._handle.setAttribute("width", String(this._notchSpace * this._doc.trackVisibleBars));
-                this._handleHighlight.setAttribute("x", String(this._notchSpace * this._doc.barScrollPos));
-                this._handleHighlight.setAttribute("width", String(this._notchSpace * this._doc.trackVisibleBars));
+                const handleX = isFinite(this._notchSpace) && isFinite(this._doc.barScrollPos) ? this._notchSpace * this._doc.barScrollPos : 0;
+                const handleWidth = isFinite(this._notchSpace) && isFinite(this._doc.trackVisibleBars) ? this._notchSpace * this._doc.trackVisibleBars : 0;
+                this._handle.setAttribute("x", String(handleX));
+                this._handle.setAttribute("width", String(handleWidth));
+                this._handleHighlight.setAttribute("x", String(handleX));
+                this._handleHighlight.setAttribute("width", String(handleWidth));
             }
             this._updatePreview();
         }
@@ -48032,9 +48034,12 @@ You should be redirected to the song at:<br /><br />
         }
         _updateSelection() {
             if (this._doc.selection.patternSelectionActive) {
+                const selStart = isFinite(this._doc.selection.patternSelectionStart) ? this._doc.selection.patternSelectionStart : 0;
+                const selEnd = isFinite(this._doc.selection.patternSelectionEnd) ? this._doc.selection.patternSelectionEnd : 0;
+                const partWidth = isFinite(this._partWidth) ? this._partWidth : 0;
                 this._selectionRect.setAttribute("visibility", "visible");
-                this._selectionRect.setAttribute("x", String(this._partWidth * this._doc.selection.patternSelectionStart));
-                this._selectionRect.setAttribute("width", String(this._partWidth * (this._doc.selection.patternSelectionEnd - this._doc.selection.patternSelectionStart)));
+                this._selectionRect.setAttribute("x", String(partWidth * selStart));
+                this._selectionRect.setAttribute("width", String(partWidth * (selEnd - selStart)));
             }
             else {
                 this._selectionRect.setAttribute("visibility", "hidden");
@@ -50268,10 +50273,11 @@ You should be redirected to the song at:<br /><br />
                 }
             }
             if (this._mouseOver && !this._mousePressed && !selected && overTrackEditor) {
-                this._boxHighlight.setAttribute("x", "" + (1 + this._barWidth * bar));
+                const barWidth = isFinite(this._barWidth) ? this._barWidth : 0;
+                this._boxHighlight.setAttribute("x", "" + (1 + barWidth * bar));
                 this._boxHighlight.setAttribute("y", "" + (1 + Config.barEditorHeight + ChannelRow.patternHeight * channel));
                 this._boxHighlight.setAttribute("height", "" + (ChannelRow.patternHeight - 2));
-                this._boxHighlight.setAttribute("width", "" + (this._barWidth - 2));
+                this._boxHighlight.setAttribute("width", "" + (barWidth - 2));
                 this._boxHighlight.style.visibility = "visible";
             }
             else if ((this._mouseOver || ((this._mouseX >= bar * this._barWidth) && (this._mouseX < bar * this._barWidth + this._barWidth) && (this._mouseY > 0))) && (!overTrackEditor)) {
@@ -50389,10 +50395,15 @@ You should be redirected to the song at:<br /><br />
             }
             this._select.style.display = this._touchMode ? "" : "none";
             if (this._doc.selection.boxSelectionActive) {
-                this._selectionRect.setAttribute("x", String(this._barWidth * this._doc.selection.boxSelectionBar + 1));
-                this._selectionRect.setAttribute("y", String(Config.barEditorHeight + ChannelRow.patternHeight * this._doc.selection.boxSelectionChannel + 1));
-                this._selectionRect.setAttribute("width", String(this._barWidth * this._doc.selection.boxSelectionWidth - 2));
-                this._selectionRect.setAttribute("height", String(ChannelRow.patternHeight * this._doc.selection.boxSelectionHeight - 2));
+                const barWidth = isFinite(this._barWidth) ? this._barWidth : 0;
+                const selBar = isFinite(this._doc.selection.boxSelectionBar) ? this._doc.selection.boxSelectionBar : 0;
+                const selChannel = isFinite(this._doc.selection.boxSelectionChannel) ? this._doc.selection.boxSelectionChannel : 0;
+                const selWidth = isFinite(this._doc.selection.boxSelectionWidth) ? this._doc.selection.boxSelectionWidth : 0;
+                const selHeight = isFinite(this._doc.selection.boxSelectionHeight) ? this._doc.selection.boxSelectionHeight : 0;
+                this._selectionRect.setAttribute("x", String(barWidth * selBar + 1));
+                this._selectionRect.setAttribute("y", String(Config.barEditorHeight + ChannelRow.patternHeight * selChannel + 1));
+                this._selectionRect.setAttribute("width", String(barWidth * selWidth - 2));
+                this._selectionRect.setAttribute("height", String(ChannelRow.patternHeight * selHeight - 2));
                 this._selectionRect.setAttribute("visibility", "visible");
             }
             else {
