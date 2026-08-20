@@ -143,6 +143,14 @@ export class TipPrompt implements Prompt {
 					p("Hover over a note and press Ctrl+G to edit these settings."),
 				);
 			} break;
+			case "chaos": {
+				message = div(
+					h2("Chaos"),
+					p("Randomize the notes inside the current selection for generative variation."),
+					p("Pitch: random transposition up to ±N semitones per note. Timing: random start shift up to ±N parts. Velocity: random volume change up to ±N."),
+					p("Set an amount to 0 to leave that property untouched. Press Ctrl+K to open."),
+				);
+			} break;
 			case "instrumentTags": {
 				message = div(
 					h2("Instrument Tags"),

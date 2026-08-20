@@ -6772,6 +6772,10 @@ export class ColorConfig {
     public static readonly modLabelPrimaryText: string = "var(--mod-label-primary-text, black)";
     public static readonly disabledNotePrimary: string = "var(--disabled-note-primary, #999)";
     public static readonly disabledNoteSecondary: string = "var(--disabled-note-secondary, #666)";
+    // BreakBox Phase 4: sampled notes (multiSample per-pitch assignments) get a
+    // teal tint distinct from normal pitched notes.
+    public static readonly sampledNotePrimary: string = "var(--sampled-note-primary, #4fb6b0)";
+    public static readonly sampledNoteSecondary: string = "var(--sampled-note-secondary, #2a7d78)";
 
 	public static readonly scrollbarColor: string = "var(--scrollbar-color)";
 	public static readonly scrollbarBackground: string = "var(--scrollbar-background)";

@@ -56,6 +56,7 @@ import { SampleLoadingStatusPrompt } from "../prompts/SampleLoadingStatusPrompt"
 import { AddSamplesPrompt } from "../prompts/AddSamplesPrompt";
 import { SampleMapPrompt } from "../prompts/SampleMapPrompt";
 import { NoteGenerativePrompt } from "../prompts/NoteGenerativePrompt";
+import { ChaosPrompt } from "../prompts/ChaosPrompt";
 import { ShortenerConfigPrompt } from "../prompts/ShortenerConfigPrompt";
 
 const { button, div, input, select, span, optgroup, option, canvas } = HTML;
@@ -2312,6 +2313,9 @@ export class SongEditor {
                     }
                     break;
                 }
+                case "chaos":
+                    this.prompt = new ChaosPrompt(this.doc);
+                    break;
                 case "generateEuclideanRhythm":
                     this.prompt = new EuclideanRhythmPrompt(this.doc);
                     break;
@@ -4654,6 +4658,13 @@ export class SongEditor {
                 if (canPlayNotes) break;
                 if (needControlForShortcuts == (event.ctrlKey || event.metaKey) && !event.shiftKey) {
                     this._openPrompt("noteGenerative");
+                    event.preventDefault();
+                }
+                break;
+            case 75: // k — BreakBox Phase 4: Chaos randomizer
+                if (canPlayNotes) break;
+                if (needControlForShortcuts == (event.ctrlKey || event.metaKey) && !event.shiftKey) {
+                    this._openPrompt("chaos");
                     event.preventDefault();
                 }
                 break;

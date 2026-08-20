@@ -5148,6 +5148,68 @@ export class ChangePatternSelection extends UndoableChange {
     }
 }
 
+// BreakBox Phase 4: Chaos tool — randomize pitch/timing/velocity of selected notes.
+export class ChangeRandomizeSelectedNotes extends ChangeSequence {
+    constructor(doc: SongDocument, pattern: Pattern, pitchAmount: number, timeAmount: number, velocityAmount: number) {
+        super();
+
+        const start: number = doc.selection.patternSelectionActive ? doc.selection.patternSelectionStart : 0;
+        const end: number = doc.selection.patternSelectionActive ? doc.selection.patternSelectionEnd : doc.song.beatsPerBar * Config.partsPerBeat;
+        if (end <= start) return;
+
+        // Collect notes inside the selection.
+        const selected: Note[] = [];
+        for (const note of pattern.notes) {
+            if (note.end > start && note.start < end) {
+                selected.push(note);
+            }
+        }
+        if (selected.length === 0) return;
+
+        for (const note of selected) {
+            const clone: Note = note.clone(true);
+            let changed: boolean = false;
+
+            if (pitchAmount > 0) {
+                const semitones: number = Math.round((Math.random() * 2 - 1) * pitchAmount);
+                if (semitones !== 0) {
+                    for (let i: number = 0; i < clone.pitches.length; i++) {
+                        clone.pitches[i] = Math.max(0, Math.min(Config.maxPitch, clone.pitches[i] + semitones));
+                    }
+                    changed = true;
+                }
+            }
+
+            if (timeAmount > 0) {
+                const jitter: number = Math.round((Math.random() * 2 - 1) * timeAmount);
+                if (jitter !== 0) {
+                    clone.start = Math.max(0, Math.min(doc.song.beatsPerBar * Config.partsPerBeat - 1, clone.start + jitter));
+                    clone.end = Math.max(clone.start + 1, clone.end + jitter);
+                    changed = true;
+                }
+            }
+
+            if (velocityAmount > 0) {
+                const maxSize: number = Config.noteSizeMax;
+                for (let i: number = 0; i < clone.pins.length; i++) {
+                    const delta: number = Math.round((Math.random() * 2 - 1) * velocityAmount);
+                    const newSize: number = Math.max(1, Math.min(maxSize, clone.pins[i].size + delta));
+                    if (newSize !== clone.pins[i].size) {
+                        clone.pins[i] = makeNotePin(clone.pins[i].interval, clone.pins[i].time, newSize);
+                        changed = true;
+                    }
+                }
+            }
+
+            if (changed) {
+                const index: number = pattern.notes.indexOf(note);
+                this.append(new ChangeNoteAdded(doc, pattern, note, index, true)); // remove original
+                this.append(new ChangeNoteAdded(doc, pattern, clone, index, false)); // insert randomized
+            }
+        }
+    }
+}
+
 export class ChangeDragSelectedNotes extends ChangeSequence {
     constructor(doc: SongDocument, channelIndex: number, pattern: Pattern, parts: number, transpose: number) {
         super();

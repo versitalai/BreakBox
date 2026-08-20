@@ -1,7 +1,7 @@
 // cross-ref: interacts with editor/core/{Change, ColorConfig, EditorConfig, HTMLWrapper, changes}; editor/model/{SongDocument}; synth/{SynthConfig, synth}
 // Copyright (c) 2012-2022 John Nesky and contributing authors, distributed under the MIT license, see accompanying the LICENSE.md file.
 
-import { getLocalStorageItem, Chord, Transition, Config, effectsIncludeNoteRange } from "../../synth/SynthConfig";
+import { getLocalStorageItem, Chord, Transition, Config, InstrumentType, effectsIncludeNoteRange } from "../../synth/SynthConfig";
 import { NotePin, Note, makeNotePin, FilterSettings, Channel, Pattern, Instrument, FilterControlPoint } from "../../synth/synth";
 import { ColorConfig } from "../core/ColorConfig";
 import { SongDocument } from "../model/SongDocument";
@@ -3035,8 +3035,15 @@ export class PatternEditor {
                 for (let i: number = 0; i < note.pitches.length; i++) {
                     const pitch: number = note.pitches[i];
                     let notePath: SVGPathElement = SVG.path();
+                    // BreakBox Phase 4: sampled notes (multiSample instruments with a
+                    // per-pitch assignment) get a distinct tint so slicers are visible.
+                    const isSampledPitch: boolean = instrument.type == InstrumentType.multiSample && instrument.sampleMap.has(pitch);
                     let colorPrimary: string = (disabled ? ColorConfig.disabledNotePrimary : ColorConfig.getChannelColor(this._doc.song, this._doc.channel).primaryNote);
                     let colorSecondary: string = (disabled ? ColorConfig.disabledNoteSecondary : ColorConfig.getChannelColor(this._doc.song, this._doc.channel).secondaryNote);
+                    if (isSampledPitch) {
+                        colorPrimary = ColorConfig.sampledNotePrimary;
+                        colorSecondary = ColorConfig.sampledNoteSecondary;
+                    }
                     notePath.setAttribute("fill", colorSecondary);
                     notePath.setAttribute("pointer-events", "none");
                     this._drawNote(notePath, pitch, note.start, note.pins, (this._pitchHeight - this._pitchBorder) / 2 + 1, false, this._octaveOffset);
