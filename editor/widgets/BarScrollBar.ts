@@ -220,10 +220,13 @@ export class BarScrollBar {
 
         if (resized || this._renderedScrollBarPos != this._doc.barScrollPos) {
             this._renderedScrollBarPos = this._doc.barScrollPos;
-            this._handle.setAttribute("x", String(this._notchSpace * this._doc.barScrollPos));
-            this._handle.setAttribute("width", String(this._notchSpace * this._doc.trackVisibleBars));
-            this._handleHighlight.setAttribute("x", String(this._notchSpace * this._doc.barScrollPos));
-            this._handleHighlight.setAttribute("width", String(this._notchSpace * this._doc.trackVisibleBars));
+            // Guard against NaN from an uninitialized/racing editor width.
+            const handleX: number = isFinite(this._notchSpace) && isFinite(this._doc.barScrollPos) ? this._notchSpace * this._doc.barScrollPos : 0;
+            const handleWidth: number = isFinite(this._notchSpace) && isFinite(this._doc.trackVisibleBars) ? this._notchSpace * this._doc.trackVisibleBars : 0;
+            this._handle.setAttribute("x", String(handleX));
+            this._handle.setAttribute("width", String(handleWidth));
+            this._handleHighlight.setAttribute("x", String(handleX));
+            this._handleHighlight.setAttribute("width", String(handleWidth));
         }
 
         this._updatePreview();

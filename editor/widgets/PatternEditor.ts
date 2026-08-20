@@ -2553,9 +2553,13 @@ export class PatternEditor {
 
     private _updateSelection(): void {
         if (this._doc.selection.patternSelectionActive) {
+            // Guard against NaN selection values (layout/race safety).
+            const selStart: number = isFinite(this._doc.selection.patternSelectionStart) ? this._doc.selection.patternSelectionStart : 0;
+            const selEnd: number = isFinite(this._doc.selection.patternSelectionEnd) ? this._doc.selection.patternSelectionEnd : 0;
+            const partWidth: number = isFinite(this._partWidth) ? this._partWidth : 0;
             this._selectionRect.setAttribute("visibility", "visible");
-            this._selectionRect.setAttribute("x", String(this._partWidth * this._doc.selection.patternSelectionStart));
-            this._selectionRect.setAttribute("width", String(this._partWidth * (this._doc.selection.patternSelectionEnd - this._doc.selection.patternSelectionStart)));
+            this._selectionRect.setAttribute("x", String(partWidth * selStart));
+            this._selectionRect.setAttribute("width", String(partWidth * (selEnd - selStart)));
         } else {
             this._selectionRect.setAttribute("visibility", "hidden");
         }

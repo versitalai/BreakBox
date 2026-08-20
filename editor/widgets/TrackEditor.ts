@@ -314,10 +314,11 @@ export class TrackEditor {
         }
 
         if (this._mouseOver && !this._mousePressed && !selected && overTrackEditor) {
-            this._boxHighlight.setAttribute("x", "" + (1 + this._barWidth * bar));
+            const barWidth: number = isFinite(this._barWidth) ? this._barWidth : 0;
+            this._boxHighlight.setAttribute("x", "" + (1 + barWidth * bar));
             this._boxHighlight.setAttribute("y", "" + (1 + Config.barEditorHeight + ChannelRow.patternHeight * channel));
             this._boxHighlight.setAttribute("height", "" + (ChannelRow.patternHeight - 2));
-            this._boxHighlight.setAttribute("width", "" + (this._barWidth - 2));
+            this._boxHighlight.setAttribute("width", "" + (barWidth - 2));
             this._boxHighlight.style.visibility = "visible";
         } else if ((this._mouseOver || ((this._mouseX >= bar * this._barWidth) && (this._mouseX < bar * this._barWidth + this._barWidth) && (this._mouseY > 0))) && (!overTrackEditor)) {
             this._boxHighlight.setAttribute("x", "" + (1 + this._barWidth * bar));
@@ -469,10 +470,16 @@ export class TrackEditor {
             // TODO: This causes the selection rectangle to repaint every time the
             // editor renders and the selection is visible. Check if anything changed
             // before overwriting the attributes?
-            this._selectionRect.setAttribute("x", String(this._barWidth * this._doc.selection.boxSelectionBar + 1));
-            this._selectionRect.setAttribute("y", String(Config.barEditorHeight + ChannelRow.patternHeight * this._doc.selection.boxSelectionChannel + 1));
-            this._selectionRect.setAttribute("width", String(this._barWidth * this._doc.selection.boxSelectionWidth - 2));
-            this._selectionRect.setAttribute("height", String(ChannelRow.patternHeight * this._doc.selection.boxSelectionHeight - 2));
+            // Guard against NaN during drags / layout races.
+            const barWidth: number = isFinite(this._barWidth) ? this._barWidth : 0;
+            const selBar: number = isFinite(this._doc.selection.boxSelectionBar) ? this._doc.selection.boxSelectionBar : 0;
+            const selChannel: number = isFinite(this._doc.selection.boxSelectionChannel) ? this._doc.selection.boxSelectionChannel : 0;
+            const selWidth: number = isFinite(this._doc.selection.boxSelectionWidth) ? this._doc.selection.boxSelectionWidth : 0;
+            const selHeight: number = isFinite(this._doc.selection.boxSelectionHeight) ? this._doc.selection.boxSelectionHeight : 0;
+            this._selectionRect.setAttribute("x", String(barWidth * selBar + 1));
+            this._selectionRect.setAttribute("y", String(Config.barEditorHeight + ChannelRow.patternHeight * selChannel + 1));
+            this._selectionRect.setAttribute("width", String(barWidth * selWidth - 2));
+            this._selectionRect.setAttribute("height", String(ChannelRow.patternHeight * selHeight - 2));
             this._selectionRect.setAttribute("visibility", "visible");
         } else {
             this._selectionRect.setAttribute("visibility", "hidden");
