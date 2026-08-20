@@ -37426,7 +37426,8 @@ li.select2-results__option[role=group] > strong:hover {
                     return;
                 this.audioContext = new AudioContext({ latencyHint: 'interactive' });
                 this.sampleRate = this.audioContext.sampleRate;
-                yield this.audioContext.audioWorklet.addModule('/breakbox-processor.js');
+                const processorUrl = new URL('breakbox-processor.js', document.baseURI || location.href).href;
+                yield this.audioContext.audioWorklet.addModule(processorUrl);
                 this.workletNode = new AudioWorkletNode(this.audioContext, 'breakbox-processor', {
                     numberOfInputs: 0,
                     numberOfOutputs: 1,
@@ -37445,11 +37446,51 @@ li.select2-results__option[role=group] > strong:hover {
                 sampleRate: this.sampleRate,
                 songData: this.serializeSongForWorklet(this.song)
             });
+            this.buildNoteSchedule();
+        }
+        buildNoteSchedule() {
+            this.scheduledCommands = [];
+            if (!this.song)
+                return;
+            const partsPerBeat = 4;
+            const ticksPerBeat = this.getTicksPerSecond() * (60 / this.song.tempo);
+            for (let channelIndex = 0; channelIndex < this.song.channels.length; channelIndex++) {
+                const channel = this.song.channels[channelIndex];
+                if (channel.muted)
+                    continue;
+                for (let patternIndex = 0; patternIndex < channel.patterns.length; patternIndex++) {
+                    const pattern = channel.patterns[patternIndex];
+                    if (!pattern)
+                        continue;
+                    const barOffsetTicks = Math.round(patternIndex * this.song.beatsPerBar * ticksPerBeat);
+                    for (const note of pattern.notes) {
+                        const instrumentIndex = (pattern.instruments && pattern.instruments.length > 0) ? pattern.instruments[0] : 0;
+                        const tickStart = barOffsetTicks + Math.round(note.start * ticksPerBeat / partsPerBeat);
+                        const tickEnd = barOffsetTicks + Math.round(note.end * ticksPerBeat / partsPerBeat);
+                        for (const pitch of note.pitches) {
+                            this.scheduleNoteOn({
+                                pitch,
+                                start: note.start,
+                                end: note.end,
+                                velocity: 0.8,
+                                probability: note.probability / 100,
+                                rollCount: note.rollCount,
+                                sampleKey: null,
+                                transpose: 0,
+                                reverse: false,
+                                samplePitchLock: false,
+                            }, tickStart);
+                            this.scheduleNoteOff(pitch, channelIndex, instrumentIndex, Math.max(tickStart + 1, tickEnd));
+                        }
+                    }
+                }
+            }
+            this.scheduledCommands.sort((a, b) => a.tick - b.tick);
         }
         play() {
             this.sendCommand('play', {});
             if (this.audioContext && this.audioContext.state === 'suspended') {
-                this.audioContext.resume();
+                this.audioContext.resume().catch((e) => console.warn('AudioContext resume failed:', e));
             }
             this.startScheduler();
         }
@@ -37556,11 +37597,11 @@ li.select2-results__option[role=group] > strong:hover {
             switch (cmd.type) {
                 case 'note_on':
                     payload.type = 'note_on';
-                    payload.voice = cmd.voice;
+                    Object.assign(payload, cmd.voice);
                     break;
                 case 'note_off':
                     payload.type = 'note_off';
-                    payload.voice = cmd.voice;
+                    Object.assign(payload, cmd.voice);
                     break;
                 case 'update_fx':
                     payload.type = 'update_fx';
@@ -37626,16 +37667,12 @@ li.select2-results__option[role=group] > strong:hover {
         });
     };
     class WorkletSynthAdapter {
-        constructor() {
+        constructor(legacySynth) {
             this.engine = null;
             this.fallback = null;
             this.useWorklet = false;
-            this.useWorklet = this.supportsAudioWorklet();
-        }
-        supportsAudioWorklet() {
-            return typeof AudioContext !== 'undefined' &&
-                typeof AudioWorkletNode !== 'undefined' &&
-                'audioWorklet' in AudioContext.prototype;
+            this.legacySynth = legacySynth;
+            this.useWorklet = false;
         }
         init() {
             return __awaiter$2(this, void 0, void 0, function* () {
@@ -37650,8 +37687,7 @@ li.select2-results__option[role=group] > strong:hover {
                         this.useWorklet = false;
                     }
                 }
-                const legacySynth = new Synth(null);
-                this.fallback = new LegacySynthAdapter(legacySynth);
+                this.fallback = new LegacySynthAdapter(this.legacySynth);
                 yield this.fallback.init();
             });
         }
@@ -37919,7 +37955,7 @@ li.select2-results__option[role=group] > strong:hover {
             this.synth = new Synth(this.song);
             this.synth.volume = this._calcVolume();
             this.synth.anticipatePoorPerformance = isMobile;
-            this.audioEngine = new WorkletSynthAdapter();
+            this.audioEngine = new WorkletSynthAdapter(this.synth);
             this.audioEngine.onTick = (tick) => {
                 this.synth.playhead = tick;
                 this._onPlayheadUpdate(tick);
