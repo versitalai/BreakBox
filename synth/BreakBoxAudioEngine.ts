@@ -21,8 +21,11 @@ export class BreakBoxAudioEngine implements AudioEngineApi {
         this.audioContext = new AudioContext({ latencyHint: 'interactive' });
         this.sampleRate = this.audioContext.sampleRate;
 
-        // Load the AudioWorklet module
-        await this.audioContext.audioWorklet.addModule('/breakbox-processor.js');
+        // Load the AudioWorklet module. Relative URL — an absolute /path breaks
+        // when the site is served from a subdirectory (GitHub Pages project
+        // pages), which is what caused the AbortError.
+        const processorUrl: string = new URL('breakbox-processor.js', document.baseURI || location.href).href;
+        await this.audioContext.audioWorklet.addModule(processorUrl);
 
         // Create the worklet node
         this.workletNode = new AudioWorkletNode(this.audioContext, 'breakbox-processor', {
@@ -51,12 +54,58 @@ export class BreakBoxAudioEngine implements AudioEngineApi {
             sampleRate: this.sampleRate,
             songData: this.serializeSongForWorklet(this.song)
         });
+        // Build the note schedule from the song's patterns so the worklet
+        // actually plays the song (previously nothing ever scheduled notes).
+        this.buildNoteSchedule();
+    }
+
+    // Phase 1: convert pattern notes into scheduled note_on/off commands.
+    // Walks every channel × pattern × note and schedules at the note's tick
+    // positions (1 part = 1 tick in the scheduler model).
+    private buildNoteSchedule(): void {
+        this.scheduledCommands = [];
+        if (!this.song) return;
+        const partsPerBeat: number = 4;
+        const ticksPerBeat: number = this.getTicksPerSecond() * (60 / this.song.tempo);
+        for (let channelIndex: number = 0; channelIndex < this.song.channels.length; channelIndex++) {
+            const channel = this.song.channels[channelIndex];
+            if (channel.muted) continue;
+            for (let patternIndex: number = 0; patternIndex < channel.patterns.length; patternIndex++) {
+                const pattern = channel.patterns[patternIndex];
+                if (!pattern) continue;
+                // Pattern index corresponds to bar number in the song loop.
+                const barOffsetTicks: number = Math.round(patternIndex * this.song.beatsPerBar * ticksPerBeat);
+                for (const note of pattern.notes) {
+                    const instrumentIndex: number = (pattern.instruments && pattern.instruments.length > 0) ? pattern.instruments[0] : 0;
+                    const tickStart: number = barOffsetTicks + Math.round(note.start * ticksPerBeat / partsPerBeat);
+                    const tickEnd: number = barOffsetTicks + Math.round(note.end * ticksPerBeat / partsPerBeat);
+                    for (const pitch of note.pitches) {
+                        this.scheduleNoteOn({
+                            pitch,
+                            start: note.start,
+                            end: note.end,
+                            velocity: 0.8,
+                            probability: note.probability / 100,
+                            rollCount: note.rollCount,
+                            sampleKey: null,
+                            transpose: 0,
+                            reverse: false,
+                            samplePitchLock: false,
+                        }, tickStart);
+                        this.scheduleNoteOff(pitch, channelIndex, instrumentIndex, Math.max(tickStart + 1, tickEnd));
+                    }
+                }
+            }
+        }
+        this.scheduledCommands.sort((a, b) => a.tick - b.tick);
     }
 
     play(): void {
         this.sendCommand('play', {});
         if (this.audioContext && this.audioContext.state === 'suspended') {
-            this.audioContext.resume();
+            // Resume must be triggered by (or after) a user gesture; play() is
+            // called from the play button so this is a valid gesture context.
+            this.audioContext.resume().catch((e) => console.warn('AudioContext resume failed:', e));
         }
         this.startScheduler();
     }
@@ -177,6 +226,7 @@ export class BreakBoxAudioEngine implements AudioEngineApi {
 
     private getTicksPerSecond(): number {
         if (!this.song) return 480; // default: 120 BPM * 4 parts/beat
+        // tempo is in beats per minute; parts per beat = 4
         return (this.song.tempo / 60) * 4; // parts per second
     }
 
@@ -185,11 +235,12 @@ export class BreakBoxAudioEngine implements AudioEngineApi {
         switch (cmd.type) {
             case 'note_on':
                 payload.type = 'note_on';
-                payload.voice = cmd.voice;
+                // Flatten the voice so the processor reads fields directly.
+                Object.assign(payload, cmd.voice);
                 break;
             case 'note_off':
                 payload.type = 'note_off';
-                payload.voice = cmd.voice; // only pitch/channel/instrument needed
+                Object.assign(payload, cmd.voice); // only pitch/channel/instrument needed
                 break;
             case 'update_fx':
                 payload.type = 'update_fx';

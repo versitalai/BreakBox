@@ -98,8 +98,10 @@ export class SongDocument {
         this.synth.volume = this._calcVolume();
         this.synth.anticipatePoorPerformance = isMobile;
 
-        // New: AudioWorklet-backed engine for actual playback
-        this.audioEngine = new WorkletSynthAdapter();
+        // New: AudioWorklet-backed engine for actual playback.
+        // Pass the song-carrying legacy synth so the fallback path plays audio
+        // (a fresh null-song synth would be silent).
+        this.audioEngine = new WorkletSynthAdapter(this.synth);
         this.audioEngine.onTick = (tick: number) => {
             // Sync playhead from worklet to legacy synth for UI
             this.synth.playhead = tick;

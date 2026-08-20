@@ -152,7 +152,10 @@ class BreakBoxProcessor extends AudioWorkletProcessor {
 
     private initialize(payload: { sampleRate: number; songData: any }): void {
         this.sampleRate = payload.sampleRate;
-        this.samplesPerTick = this.sampleRate / (payload.songData.tempo * 2 / 60); // rough
+        // tempo is beats/min; parts per beat = 4 -> parts/sec = tempo/15.
+        // Samples per part = sampleRate / (parts/sec).
+        const partsPerSecond: number = payload.songData.tempo / 15;
+        this.samplesPerTick = partsPerSecond > 0 ? this.sampleRate / partsPerSecond : this.sampleRate / 8;
         this.ticksPerBuffer = 128 / this.samplesPerTick; // 128 = render quantum
         // TODO: parse songData, initialize instruments, patterns, etc.
     }

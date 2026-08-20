@@ -11,15 +11,15 @@ export class WorkletSynthAdapter implements AudioEngineApi {
     private engine: BreakBoxAudioEngine | null = null;
     private fallback: LegacySynthAdapter | null = null;
     private useWorklet: boolean = false;
+    private legacySynth: Synth;
 
-    constructor() {
-        this.useWorklet = this.supportsAudioWorklet();
-    }
-
-    private supportsAudioWorklet(): boolean {
-        return typeof AudioContext !== 'undefined' &&
-               typeof AudioWorkletNode !== 'undefined' &&
-               'audioWorklet' in AudioContext.prototype;
+    constructor(legacySynth: Synth) {
+        this.legacySynth = legacySynth;
+        // Phase 1: the worklet DSP is still a scaffold (sine/sample playback).
+        // Prefer the full legacy synth for real playback; the worklet path is
+        // exercised when explicitly enabled (feature flag) so we don't regress
+        // audio quality before the full DSP port lands.
+        this.useWorklet = false;
     }
 
     async init(): Promise<void> {
@@ -33,9 +33,9 @@ export class WorkletSynthAdapter implements AudioEngineApi {
                 this.useWorklet = false;
             }
         }
-        // Fallback
-        const legacySynth = new Synth(null!); // song set later via setSong
-        this.fallback = new LegacySynthAdapter(legacySynth);
+        // Fallback: use the song-carrying legacy synth (NOT a fresh null-song
+        // synth — that would play silence).
+        this.fallback = new LegacySynthAdapter(this.legacySynth);
         await this.fallback.init();
     }
 
