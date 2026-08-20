@@ -1255,6 +1255,9 @@ export class Instrument {
     public transition: number = Config.transitions.dictionary["normal"].index;
     public pitchShift: number = 0;
     public detune: number = 0;
+    // BreakBox: when enabled, custom samples play at their original speed
+    // regardless of the pitch shift / detune settings (no chipmunk effect).
+    public samplePitchLock: boolean = false;
     public vibrato: number = 0;
     public interval: number = 0;
     public vibratoDepth: number = 0;
@@ -1733,6 +1736,9 @@ export class Instrument {
         if (effectsIncludeDetune(this.effects)) {
             instrumentObject["detuneCents"] = Synth.detuneToCents(this.detune);
         }
+        if (this.samplePitchLock) {
+            instrumentObject["samplePitchLock"] = true;
+        }
         if (effectsIncludeVibrato(this.effects)) {
             if (this.vibrato == -1) {
                 this.vibrato = 5;
@@ -2164,6 +2170,9 @@ export class Instrument {
         }
         if (instrumentObject["detuneCents"] != undefined) {
             this.detune = clamp(Config.detuneMin, Config.detuneMax + 1, Math.round(Synth.centsToDetune(+instrumentObject["detuneCents"])));
+        }
+        if (instrumentObject["samplePitchLock"] != undefined) {
+            this.samplePitchLock = Boolean(instrumentObject["samplePitchLock"]);
         }
 
         this.vibrato = Config.vibratos.dictionary["none"].index; // default value.
@@ -3515,6 +3524,12 @@ export class Song {
                 if (effectsIncludeNoteRange(instrument.effects)) {
                     buffer.push(base64IntToCharCode[instrument.upperNoteLimit >> 6], base64IntToCharCode[instrument.upperNoteLimit & 0x3f]);
                     buffer.push(base64IntToCharCode[instrument.lowerNoteLimit >> 6], base64IntToCharCode[instrument.lowerNoteLimit & 0x3f]);
+                }
+
+                // BreakBox: sample pitch lock flag. Placed after the effects payload so
+                // older parsers (no case for this tag) skip it as a harmless unknown command.
+                if (instrument.samplePitchLock) {
+                    buffer.push(SongTagCode.samplePitchLock, base64IntToCharCode[1]);
                 }
 
                 if (instrument.type != InstrumentType.drumset) {
@@ -5301,6 +5316,11 @@ export class Song {
                 }
                 // Clamp the range.
                 instrument.effects &= (1 << EffectType.length) - 1;
+            } break;
+            case SongTagCode.samplePitchLock: {
+                // BreakBox: flag is only written when true; value byte is 1.
+                const instrument: Instrument = this.channels[instrumentChannelIterator].instruments[instrumentIndexIterator];
+                instrument.samplePitchLock = base64CharCodeToInt[compressed.charCodeAt(charIndex++)] != 0;
             } break;
             case SongTagCode.volume: {
                 if (beforeThree && fromBeepBox) {

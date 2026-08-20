@@ -207,14 +207,14 @@ export class BreakBoxAudioEngine implements AudioEngineApi {
     }
 
     scheduleNoteOff(pitch: number, channel: number, instrument: number, tick: number): void {
-        const voice: NoteVoice = { pitch, start: 0, end: 0, velocity: 0, probability: 1, rollCount: 1, sampleKey: null, transpose: 0, reverse: false };
+        const voice: NoteVoice = { pitch, start: 0, end: 0, velocity: 0, probability: 1, rollCount: 1, sampleKey: null, transpose: 0, reverse: false, samplePitchLock: false };
         const cmd: VoiceCommand = { type: 'note_off', tick, voice };
         this.scheduledCommands.push({ tick, cmd });
         this.scheduledCommands.sort((a, b) => a.tick - b.tick);
     }
 
     scheduleFxUpdate(pitch: number, channel: number, instrument: number, fx: Partial<VoiceFx>, tick: number): void {
-        const cmd: VoiceCommand = { type: 'update_fx', tick, voice: { pitch, start: 0, end: 0, velocity: 0, probability: 1, rollCount: 1, sampleKey: null, transpose: 0, reverse: false }, fx };
+        const cmd: VoiceCommand = { type: 'update_fx', tick, voice: { pitch, start: 0, end: 0, velocity: 0, probability: 1, rollCount: 1, sampleKey: null, transpose: 0, reverse: false, samplePitchLock: false }, fx };
         this.scheduledCommands.push({ tick, cmd });
         this.scheduledCommands.sort((a, b) => a.tick - b.tick);
     }

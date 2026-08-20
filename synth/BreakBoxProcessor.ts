@@ -12,7 +12,7 @@ interface WorkletCommand {
         | 'load_sample'     // { key: string, buffer: ArrayBuffer, sampleRate: number, rootKey: number, loop?: {start, end, mode, backwards, offset} }
         | 'set_mod'         // { setting: number, value: number, nextValue: number, channel?: number, instrument?: number }
         | 'unset_mod'       // { setting: number, channel?: number, instrument?: number }
-        | 'note_on'         // { pitch: number, velocity: number, channel: number, instrument: number, tick: number, probability: number, rollCount: number, sampleKey: string|null, transpose: number, reverse: boolean }
+        | 'note_on'         // { pitch: number, velocity: number, channel: number, instrument: number, tick: number, probability: number, rollCount: number, sampleKey: string|null, transpose: number, reverse: boolean, samplePitchLock: boolean }
         | 'note_off'        // { pitch: number, channel: number, instrument: number, tick: number }
         | 'update_fx'       // { pitch: number, channel: number, instrument: number, fx: Partial<VoiceFx> }
         | 'set_master'      // { volume: number, limiterEnabled: boolean }
@@ -38,6 +38,7 @@ interface VoiceState {
     sampleKey: string | null;
     transpose: number;
     reverse: boolean;
+    samplePitchLock: boolean;
     fx: VoiceFx;
     active: boolean;
     // synthesis state
@@ -254,7 +255,7 @@ class BreakBoxProcessor extends AudioWorkletProcessor {
         return {
             pitch: 0, velocity: 0, channel: 0, instrument: 0,
             startTick: 0, currentTick: 0, probability: 1, rollCount: 1,
-            sampleKey: null, transpose: 0, reverse: false,
+            sampleKey: null, transpose: 0, reverse: false, samplePitchLock: false,
             fx: { bitcrush: 0, filterCutoff: 1, filterResonance: 0, drive: 0, pan: 0 },
             active: false, phase: 0, phaseIncrement: 0,
             envelopeStates: [], filterState: null,
@@ -284,10 +285,12 @@ class BreakBoxProcessor extends AudioWorkletProcessor {
         voice.sampleKey = payload.sampleKey ?? null;
         voice.transpose = payload.transpose ?? 0;
         voice.reverse = payload.reverse ?? false;
+        voice.samplePitchLock = payload.samplePitchLock ?? false;
         voice.active = true;
         voice.phase = 0;
 
-        // Calculate phase increment from pitch
+        // Calculate phase increment from pitch (unless the sample is pitch-locked,
+        // in which case the sample plays at its natural speed).
         const freq = 440 * Math.pow(2, (payload.pitch + payload.transpose - 69) / 12);
         voice.phaseIncrement = freq / this.sampleRate;
 
@@ -322,7 +325,10 @@ class BreakBoxProcessor extends AudioWorkletProcessor {
 
             if (sample) {
                 // Sample playback with pitch shifting
-                const rate = voice.phaseIncrement * sample.length / 440; // rough
+                // (when samplePitchLock is set, play at the sample's natural rate — no pitch/speed change)
+                const rate = voice.samplePitchLock
+                    ? 1.0
+                    : voice.phaseIncrement * sample.length / 440; // rough
                 if (voice.reverse) {
                     sampleIndex = sample.length - 1 - Math.floor(voice.phase * sample.length);
                 } else {

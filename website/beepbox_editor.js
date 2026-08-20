@@ -19193,7 +19193,7 @@ li.select2-results__option[role=group] > strong:hover {
                     }
                 }
             }
-            if (effectsIncludePitchShift(instrument.effects)) {
+            if (effectsIncludePitchShift(instrument.effects) && !instrument.samplePitchLock) {
                 let pitchShift = Config.justIntonationSemitones[instrument.pitchShift] / intervalScale;
                 let pitchShiftScalarStart = 1.0;
                 let pitchShiftScalarEnd = 1.0;
@@ -19207,7 +19207,7 @@ li.select2-results__option[role=group] > strong:hover {
                 intervalStart += pitchShift * envelopeStart * pitchShiftScalarStart;
                 intervalEnd += pitchShift * envelopeEnd * pitchShiftScalarEnd;
             }
-            if (effectsIncludeDetune(instrument.effects) || this.isModActive(Config.modulators.dictionary["song detune"].index, channelIndex, tone.instrumentIndex)) {
+            if ((effectsIncludeDetune(instrument.effects) || this.isModActive(Config.modulators.dictionary["song detune"].index, channelIndex, tone.instrumentIndex)) && !instrument.samplePitchLock) {
                 const envelopeStart = envelopeStarts[19];
                 const envelopeEnd = envelopeEnds[19];
                 let modDetuneStart = instrument.detune;
@@ -23403,6 +23403,7 @@ li.select2-results__option[role=group] > strong:hover {
             this.transition = Config.transitions.dictionary["normal"].index;
             this.pitchShift = 0;
             this.detune = 0;
+            this.samplePitchLock = false;
             this.vibrato = 0;
             this.interval = 0;
             this.vibratoDepth = 0;
@@ -23821,6 +23822,9 @@ li.select2-results__option[role=group] > strong:hover {
             if (effectsIncludeDetune(this.effects)) {
                 instrumentObject["detuneCents"] = Synth.detuneToCents(this.detune);
             }
+            if (this.samplePitchLock) {
+                instrumentObject["samplePitchLock"] = true;
+            }
             if (effectsIncludeVibrato(this.effects)) {
                 if (this.vibrato == -1) {
                     this.vibrato = 5;
@@ -24237,6 +24241,9 @@ li.select2-results__option[role=group] > strong:hover {
             }
             if (instrumentObject["detuneCents"] != undefined) {
                 this.detune = clamp(Config.detuneMin, Config.detuneMax + 1, Math.round(Synth.centsToDetune(+instrumentObject["detuneCents"])));
+            }
+            if (instrumentObject["samplePitchLock"] != undefined) {
+                this.samplePitchLock = Boolean(instrumentObject["samplePitchLock"]);
             }
             this.vibrato = Config.vibratos.dictionary["none"].index;
             const vibratoProperty = instrumentObject["vibrato"] || instrumentObject["effect"];
@@ -25440,6 +25447,9 @@ li.select2-results__option[role=group] > strong:hover {
                     if (effectsIncludeNoteRange(instrument.effects)) {
                         buffer.push(base64IntToCharCode[instrument.upperNoteLimit >> 6], base64IntToCharCode[instrument.upperNoteLimit & 0x3f]);
                         buffer.push(base64IntToCharCode[instrument.lowerNoteLimit >> 6], base64IntToCharCode[instrument.lowerNoteLimit & 0x3f]);
+                    }
+                    if (instrument.samplePitchLock) {
+                        buffer.push(74, base64IntToCharCode[1]);
                     }
                     if (instrument.type != 4) {
                         buffer.push(100, base64IntToCharCode[instrument.fadeIn], base64IntToCharCode[instrument.fadeOut]);
@@ -27140,6 +27150,12 @@ li.select2-results__option[role=group] > strong:hover {
                                 }
                             }
                             instrument.effects &= (1 << 18) - 1;
+                        }
+                        break;
+                    case 74:
+                        {
+                            const instrument = this.channels[instrumentChannelIterator].instruments[instrumentIndexIterator];
+                            instrument.samplePitchLock = base64CharCodeToInt[compressed.charCodeAt(charIndex++)] != 0;
                         }
                         break;
                     case 118:
@@ -32370,6 +32386,15 @@ li.select2-results__option[role=group] > strong:hover {
                 this._didSomething();
         }
     }
+    class ChangeSamplePitchLock extends ChangeInstrumentSlider {
+        constructor(doc, oldValue, newValue) {
+            super(doc);
+            this._instrument.samplePitchLock = newValue;
+            doc.notifier.changed();
+            if (oldValue != newValue)
+                this._didSomething();
+        }
+    }
     class ChangeRingMod extends ChangeInstrumentSlider {
         constructor(doc, oldValue, newValue) {
             super(doc);
@@ -37181,13 +37206,13 @@ li.select2-results__option[role=group] > strong:hover {
             this.scheduledCommands.sort((a, b) => a.tick - b.tick);
         }
         scheduleNoteOff(pitch, channel, instrument, tick) {
-            const voice = { pitch, start: 0, end: 0, velocity: 0, probability: 1, rollCount: 1, sampleKey: null, transpose: 0, reverse: false };
+            const voice = { pitch, start: 0, end: 0, velocity: 0, probability: 1, rollCount: 1, sampleKey: null, transpose: 0, reverse: false, samplePitchLock: false };
             const cmd = { type: 'note_off', tick, voice };
             this.scheduledCommands.push({ tick, cmd });
             this.scheduledCommands.sort((a, b) => a.tick - b.tick);
         }
         scheduleFxUpdate(pitch, channel, instrument, fx, tick) {
-            const cmd = { type: 'update_fx', tick, voice: { pitch, start: 0, end: 0, velocity: 0, probability: 1, rollCount: 1, sampleKey: null, transpose: 0, reverse: false }, fx };
+            const cmd = { type: 'update_fx', tick, voice: { pitch, start: 0, end: 0, velocity: 0, probability: 1, rollCount: 1, sampleKey: null, transpose: 0, reverse: false, samplePitchLock: false }, fx };
             this.scheduledCommands.push({ tick, cmd });
             this.scheduledCommands.sort((a, b) => a.tick - b.tick);
         }
@@ -49096,6 +49121,11 @@ You should be redirected to the song at:<br /><br />
                         message = div$5(h2$4("Detune"), p("This setting can be used to finely control the pitch of your instrument. It is in units of 'cents', 100 of which equal a pitch shift of one semitone."), p("Careful - you can quickly get very dissonant sounding songs by using this setting."));
                     }
                     break;
+                case "samplePitchLock":
+                    {
+                        message = div$5(h2$4("Pitch Lock Sample"), p("When enabled, custom samples play at their original speed regardless of the Pitch Shift and Detune settings — no chipmunk effect."), p("Useful for breakcore: map a drum break across the keyboard without it speeding up or slowing down per note."));
+                    }
+                    break;
                 case "instrumentTags":
                     {
                         message = div$5(h2$4("Instrument Tags"), p("JukeBox's instrument tags allow for filtering out specific instrument types, authors, and more!"), p("Applied tags will filter search results from the instrument type search box, as well has presets rolled with random selection."), p("Examples of how to use instrument tags:"), p("Basic: chip"), p("Multiple: ashiiware chip"), p("Exclude: !fm"), p("Try checking the \"featured\" tag for the best presets!"));
@@ -52150,6 +52180,8 @@ You should be redirected to the song at:<br /><br />
             this._detuneSlider = new Slider(input({ style: "margin: 0;", type: "range", min: Config.detuneMin - Config.detuneCenter, max: Config.detuneMax - Config.detuneCenter, value: 0, step: "4" }), this.doc, (oldValue, newValue) => new ChangeDetune(this.doc, oldValue, newValue), true);
             this._detuneSliderInputBox = input({ style: "width: 4em; font-size: 80%; ", id: "detuneSliderInputBox", type: "number", step: "1", min: Config.detuneMin - Config.detuneCenter, max: Config.detuneMax - Config.detuneCenter, value: 0 });
             this._detuneSliderRow = div({ class: "selectRow" }, div({}, span({ class: "tip", style: "height:1em; font-size: smaller;", onclick: () => this._openPrompt("detune") }, "Detune: "), div({ style: `color: ${ColorConfig.secondaryText}; margin-top: -3px;` }, this._detuneSliderInputBox)), this._detuneSlider.container);
+            this._samplePitchLockBox = input({ type: "checkbox", style: "width: 1em; padding: 0; margin-right: 4em;" });
+            this._samplePitchLockRow = div({ class: "selectRow" }, span({ class: "tip", onclick: () => this._openPrompt("samplePitchLock") }, "Pitch Lock Sample:"), this._samplePitchLockBox);
             this._distortionSlider = new Slider(input({ style: "margin: 0; position: sticky;", type: "range", min: "0", max: Config.distortionRange - 1, value: "0", step: "1" }), this.doc, (oldValue, newValue) => new ChangeDistortion(this.doc, oldValue, newValue), false);
             this._distortionRow = div({ class: "selectRow" }, span({ class: "tip", onclick: () => this._openPrompt("distortion") }, "Distortion:"), this._distortionSlider.container);
             this._aliasingBox = input({ type: "checkbox", style: "width: 1em; padding: 0; margin-right: 4em;" });
@@ -52268,7 +52300,7 @@ You should be redirected to the song at:<br /><br />
             this._feedbackAmplitudeSlider = new Slider(input({ type: "range", min: "0", max: Config.operatorAmplitudeMax, value: "0", step: "1", title: "Feedback Amplitude" }), this.doc, (oldValue, newValue) => new ChangeFeedbackAmplitude(this.doc, oldValue, newValue), false);
             this._feedbackRow2 = div({ class: "selectRow" }, span({ class: "tip", onclick: () => this._openPrompt("feedbackVolume") }, "Fdback Vol:"), this._feedbackAmplitudeSlider.container);
             this._addEnvelopeButton = button({ type: "button", class: "add-envelope" });
-            this._customInstrumentSettingsGroup = div({ class: "editor-controls" }, this._panSliderRow, this._panDropdownGroup, this._chipWaveSelectRow, this._chipNoiseSelectRow, this._useChipWaveAdvancedLoopControlsRow, this._chipWaveLoopModeSelectRow, this._chipWaveLoopStartRow, this._chipWaveLoopEndRow, this._chipWaveStartOffsetRow, this._chipWavePlayBackwardsRow, this._customWaveDraw, this._eqFilterTypeRow, this._eqFilterRow, this._eqFilterSimpleCutRow, this._eqFilterSimplePeakRow, this._fadeInOutRow, this._algorithmSelectRow, this._algorithm6OpSelectRow, this._phaseModGroup, this._feedbackRow1, this._feedback6OpRow1, this._feedbackRow2, this._spectrumRow, this._harmonicsRow, this._drumsetGroup, this._supersawDynamismRow, this._supersawSpreadRow, this._supersawShapeRow, this._pulseWidthRow, this._pulseWidthDropdownGroup, this._stringSustainRow, this._unisonSelectRow, this._unisonDropdownGroup, div({ style: `padding: 2px 0; margin-left: 2em; display: flex; align-items: center;` }, span({ style: `flex-grow: 1; text-align: center;` }, span({ class: "tip", onclick: () => this._openPrompt("effects") }, "Effects")), div({ class: "effects-menu" }, this._effectsSelect)), this._transitionRow, this._transitionDropdownGroup, this._chordSelectRow, this._chordDropdownGroup, this._pitchShiftRow, this._detuneSliderRow, this._vibratoSelectRow, this._vibratoDropdownGroup, this._noteFilterTypeRow, this._noteFilterRow, this._noteFilterSimpleCutRow, this._noteFilterSimplePeakRow, this._distortionRow, this._aliasingRow, this._bitcrusherQuantizationRow, this._bitcrusherFreqRow, this._chorusRow, this._echoSustainRow, this._echoDelayRow, this._reverbRow, this._ringModContainerRow, this._phaserMixRow, this._phaserFreqRow, this._phaserFeedbackRow, this._phaserStagesRow, this._invertWaveRow, this._upperNoteLimitRow, this._lowerNoteLimitRow, this._granularContainerRow, div({ style: `padding: 2px 0; margin-left: 2em; display: flex; align-items: center;` }, span({ style: `flex-grow: 1; text-align: center;` }, span({ class: "tip", onclick: () => this._openPrompt("envelopes") }, "Envelopes")), this._envelopeDropdown, this._addEnvelopeButton), this._envelopeDropdownGroup, this.envelopeEditor.container);
+            this._customInstrumentSettingsGroup = div({ class: "editor-controls" }, this._panSliderRow, this._panDropdownGroup, this._chipWaveSelectRow, this._chipNoiseSelectRow, this._useChipWaveAdvancedLoopControlsRow, this._chipWaveLoopModeSelectRow, this._chipWaveLoopStartRow, this._chipWaveLoopEndRow, this._chipWaveStartOffsetRow, this._chipWavePlayBackwardsRow, this._customWaveDraw, this._eqFilterTypeRow, this._eqFilterRow, this._eqFilterSimpleCutRow, this._eqFilterSimplePeakRow, this._fadeInOutRow, this._algorithmSelectRow, this._algorithm6OpSelectRow, this._phaseModGroup, this._feedbackRow1, this._feedback6OpRow1, this._feedbackRow2, this._spectrumRow, this._harmonicsRow, this._drumsetGroup, this._supersawDynamismRow, this._supersawSpreadRow, this._supersawShapeRow, this._pulseWidthRow, this._pulseWidthDropdownGroup, this._stringSustainRow, this._unisonSelectRow, this._unisonDropdownGroup, div({ style: `padding: 2px 0; margin-left: 2em; display: flex; align-items: center;` }, span({ style: `flex-grow: 1; text-align: center;` }, span({ class: "tip", onclick: () => this._openPrompt("effects") }, "Effects")), div({ class: "effects-menu" }, this._effectsSelect)), this._transitionRow, this._transitionDropdownGroup, this._chordSelectRow, this._chordDropdownGroup, this._pitchShiftRow, this._detuneSliderRow, this._samplePitchLockRow, this._vibratoSelectRow, this._vibratoDropdownGroup, this._noteFilterTypeRow, this._noteFilterRow, this._noteFilterSimpleCutRow, this._noteFilterSimplePeakRow, this._distortionRow, this._aliasingRow, this._bitcrusherQuantizationRow, this._bitcrusherFreqRow, this._chorusRow, this._echoSustainRow, this._echoDelayRow, this._reverbRow, this._ringModContainerRow, this._phaserMixRow, this._phaserFreqRow, this._phaserFeedbackRow, this._phaserStagesRow, this._invertWaveRow, this._upperNoteLimitRow, this._lowerNoteLimitRow, this._granularContainerRow, div({ style: `padding: 2px 0; margin-left: 2em; display: flex; align-items: center;` }, span({ style: `flex-grow: 1; text-align: center;` }, span({ class: "tip", onclick: () => this._openPrompt("envelopes") }, "Envelopes")), this._envelopeDropdown, this._addEnvelopeButton), this._envelopeDropdownGroup, this.envelopeEditor.container);
             this._instrumentCopyGroup = div({ class: "editor-controls" }, div({ class: "selectRow" }, this._instrumentCopyButton, this._instrumentPasteButton));
             this._instrumentExportGroup = div({ class: "editor-controls" }, div({ class: "selectRow" }, this._instrumentExportButton, this._instrumentImportButton));
             this._instrumentSettingsTextRow = div({ id: "instrumentSettingsText", style: `padding: 3px 0; max-width: 15em; text-align: center; color: ${ColorConfig.secondaryText};` }, "Instrument Settings");
@@ -52358,6 +52390,7 @@ You should be redirected to the song at:<br /><br />
                     this.mainLayer.focus({ preventScroll: true });
             };
             this.whenUpdated = () => {
+                var _a, _b;
                 const prefs = this.doc.prefs;
                 this._muteEditor.container.style.display = prefs.enableChannelMuting ? "" : "none";
                 const trackBounds = this._trackVisibleArea.getBoundingClientRect();
@@ -52843,6 +52876,14 @@ You should be redirected to the song at:<br /><br />
                     }
                     else {
                         this._detuneSliderRow.style.display = "none";
+                    }
+                    const isSampledChip = instrument.type == 0 && (((_a = Config.chipWaves[instrument.chipWave].isSampled) !== null && _a !== void 0 ? _a : false) || ((_b = Config.chipWaves[instrument.chipWave].isCustomSampled) !== null && _b !== void 0 ? _b : false));
+                    if (isSampledChip) {
+                        this._samplePitchLockRow.style.display = "";
+                        this._samplePitchLockBox.checked = instrument.samplePitchLock;
+                    }
+                    else {
+                        this._samplePitchLockRow.style.display = "none";
                     }
                     if (effectsIncludeVibrato(instrument.effects)) {
                         this._vibratoSelectRow.style.display = "";
@@ -55448,6 +55489,7 @@ You should be redirected to the song at:<br /><br />
             this._panSliderInputBox.addEventListener("input", () => { this.doc.record(new ChangePan(this.doc, this.doc.song.channels[this.doc.channel].instruments[this.doc.getCurrentInstrument()].pan, Math.min(100.0, Math.max(0.0, Math.round(+this._panSliderInputBox.value))))); });
             this._pwmSliderInputBox.addEventListener("input", () => { this.doc.record(new ChangePulseWidth(this.doc, this.doc.song.channels[this.doc.channel].instruments[this.doc.getCurrentInstrument()].pulseWidth, Math.min(Config.pulseWidthRange, Math.max(1.0, Math.round(+this._pwmSliderInputBox.value))))); });
             this._detuneSliderInputBox.addEventListener("input", () => { this.doc.record(new ChangeDetune(this.doc, this.doc.song.channels[this.doc.channel].instruments[this.doc.getCurrentInstrument()].detune, Math.min(Config.detuneMax - Config.detuneCenter, Math.max(Config.detuneMin - Config.detuneCenter, Math.round(+this._detuneSliderInputBox.value))))); });
+            this._samplePitchLockBox.addEventListener("input", () => { this.doc.record(new ChangeSamplePitchLock(this.doc, !this._samplePitchLockBox.checked, this._samplePitchLockBox.checked)); });
             this._unisonVoicesInputBox.addEventListener("input", () => { this.doc.record(new ChangeUnisonVoices(this.doc, this.doc.song.channels[this.doc.channel].instruments[this.doc.getCurrentInstrument()].unisonVoices, Math.min(Config.unisonVoicesMax, Math.max(Config.unisonVoicesMin, Math.round(+this._unisonVoicesInputBox.value))))); });
             this._unisonSpreadInputBox.addEventListener("input", () => { this.doc.record(new ChangeUnisonSpread(this.doc, this.doc.song.channels[this.doc.channel].instruments[this.doc.getCurrentInstrument()].unisonSpread, Math.min(Config.unisonSpreadMax, Math.max(Config.unisonSpreadMin, +this._unisonSpreadInputBox.value)))); });
             this._unisonOffsetInputBox.addEventListener("input", () => { this.doc.record(new ChangeUnisonOffset(this.doc, this.doc.song.channels[this.doc.channel].instruments[this.doc.getCurrentInstrument()].unisonOffset, Math.min(Config.unisonOffsetMax, Math.max(Config.unisonOffsetMin, +this._unisonOffsetInputBox.value)))); });

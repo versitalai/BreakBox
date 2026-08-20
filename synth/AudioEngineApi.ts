@@ -24,6 +24,7 @@ export interface NoteVoice {
     readonly sampleKey: string | null;
     readonly transpose: number;
     readonly reverse: boolean;
+    readonly samplePitchLock: boolean; // BreakBox: keep sample at original speed (ignore pitch shift/detune)
 }
 
 export interface VoiceFx {

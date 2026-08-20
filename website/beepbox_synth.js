@@ -9622,7 +9622,7 @@ var beepbox = (function (exports) {
                     }
                 }
             }
-            if (effectsIncludePitchShift(instrument.effects)) {
+            if (effectsIncludePitchShift(instrument.effects) && !instrument.samplePitchLock) {
                 let pitchShift = Config.justIntonationSemitones[instrument.pitchShift] / intervalScale;
                 let pitchShiftScalarStart = 1.0;
                 let pitchShiftScalarEnd = 1.0;
@@ -9636,7 +9636,7 @@ var beepbox = (function (exports) {
                 intervalStart += pitchShift * envelopeStart * pitchShiftScalarStart;
                 intervalEnd += pitchShift * envelopeEnd * pitchShiftScalarEnd;
             }
-            if (effectsIncludeDetune(instrument.effects) || this.isModActive(Config.modulators.dictionary["song detune"].index, channelIndex, tone.instrumentIndex)) {
+            if ((effectsIncludeDetune(instrument.effects) || this.isModActive(Config.modulators.dictionary["song detune"].index, channelIndex, tone.instrumentIndex)) && !instrument.samplePitchLock) {
                 const envelopeStart = envelopeStarts[19];
                 const envelopeEnd = envelopeEnds[19];
                 let modDetuneStart = instrument.detune;
@@ -13832,6 +13832,7 @@ var beepbox = (function (exports) {
             this.transition = Config.transitions.dictionary["normal"].index;
             this.pitchShift = 0;
             this.detune = 0;
+            this.samplePitchLock = false;
             this.vibrato = 0;
             this.interval = 0;
             this.vibratoDepth = 0;
@@ -14250,6 +14251,9 @@ var beepbox = (function (exports) {
             if (effectsIncludeDetune(this.effects)) {
                 instrumentObject["detuneCents"] = Synth.detuneToCents(this.detune);
             }
+            if (this.samplePitchLock) {
+                instrumentObject["samplePitchLock"] = true;
+            }
             if (effectsIncludeVibrato(this.effects)) {
                 if (this.vibrato == -1) {
                     this.vibrato = 5;
@@ -14666,6 +14670,9 @@ var beepbox = (function (exports) {
             }
             if (instrumentObject["detuneCents"] != undefined) {
                 this.detune = clamp(Config.detuneMin, Config.detuneMax + 1, Math.round(Synth.centsToDetune(+instrumentObject["detuneCents"])));
+            }
+            if (instrumentObject["samplePitchLock"] != undefined) {
+                this.samplePitchLock = Boolean(instrumentObject["samplePitchLock"]);
             }
             this.vibrato = Config.vibratos.dictionary["none"].index;
             const vibratoProperty = instrumentObject["vibrato"] || instrumentObject["effect"];
@@ -15869,6 +15876,9 @@ var beepbox = (function (exports) {
                     if (effectsIncludeNoteRange(instrument.effects)) {
                         buffer.push(base64IntToCharCode[instrument.upperNoteLimit >> 6], base64IntToCharCode[instrument.upperNoteLimit & 0x3f]);
                         buffer.push(base64IntToCharCode[instrument.lowerNoteLimit >> 6], base64IntToCharCode[instrument.lowerNoteLimit & 0x3f]);
+                    }
+                    if (instrument.samplePitchLock) {
+                        buffer.push(74, base64IntToCharCode[1]);
                     }
                     if (instrument.type != 4) {
                         buffer.push(100, base64IntToCharCode[instrument.fadeIn], base64IntToCharCode[instrument.fadeOut]);
@@ -17569,6 +17579,12 @@ var beepbox = (function (exports) {
                                 }
                             }
                             instrument.effects &= (1 << 18) - 1;
+                        }
+                        break;
+                    case 74:
+                        {
+                            const instrument = this.channels[instrumentChannelIterator].instruments[instrumentIndexIterator];
+                            instrument.samplePitchLock = base64CharCodeToInt[compressed.charCodeAt(charIndex++)] != 0;
                         }
                         break;
                     case 118:

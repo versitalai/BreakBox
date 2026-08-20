@@ -119,6 +119,13 @@ export class TipPrompt implements Prompt {
 					p("Careful - you can quickly get very dissonant sounding songs by using this setting."),
 				);
 			} break;
+			case "samplePitchLock": {
+				message = div(
+					h2("Pitch Lock Sample"),
+					p("When enabled, custom samples play at their original speed regardless of the Pitch Shift and Detune settings — no chipmunk effect."),
+					p("Useful for breakcore: map a drum break across the keyboard without it speeding up or slowing down per note."),
+				);
+			} break;
 			case "instrumentTags": {
 				message = div(
 					h2("Instrument Tags"),

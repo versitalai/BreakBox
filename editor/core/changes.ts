@@ -2637,6 +2637,15 @@ export class ChangeDetune extends ChangeInstrumentSlider {
     }
 }
 
+export class ChangeSamplePitchLock extends ChangeInstrumentSlider {
+    constructor(doc: SongDocument, oldValue: boolean, newValue: boolean) {
+        super(doc);
+        this._instrument.samplePitchLock = newValue;
+        doc.notifier.changed();
+        if (oldValue != newValue) this._didSomething();
+    }
+}
+
 export class ChangeRingMod extends ChangeInstrumentSlider {
     constructor(doc: SongDocument, oldValue: number, newValue: number) {
         super(doc);

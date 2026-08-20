@@ -4799,7 +4799,7 @@ export class Synth {
             }
         }
 
-        if (effectsIncludePitchShift(instrument.effects)) {
+        if (effectsIncludePitchShift(instrument.effects) && !instrument.samplePitchLock) {
             let pitchShift: number = Config.justIntonationSemitones[instrument.pitchShift] / intervalScale;
             let pitchShiftScalarStart: number = 1.0;
             let pitchShiftScalarEnd: number = 1.0;
@@ -4813,7 +4813,7 @@ export class Synth {
             intervalStart += pitchShift * envelopeStart * pitchShiftScalarStart;
             intervalEnd += pitchShift * envelopeEnd * pitchShiftScalarEnd;
         }
-        if (effectsIncludeDetune(instrument.effects) || this.isModActive(Config.modulators.dictionary["song detune"].index, channelIndex, tone.instrumentIndex)) {
+        if ((effectsIncludeDetune(instrument.effects) || this.isModActive(Config.modulators.dictionary["song detune"].index, channelIndex, tone.instrumentIndex)) && !instrument.samplePitchLock) {
             const envelopeStart: number = envelopeStarts[EnvelopeComputeIndex.detune];
             const envelopeEnd: number = envelopeEnds[EnvelopeComputeIndex.detune];
             let modDetuneStart: number = instrument.detune;
