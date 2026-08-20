@@ -8,8 +8,9 @@ import { Prompt } from "./Prompt";
 import { ChangeSampleMap } from "../core/changes";
 import { EditorConfig } from "../core/EditorConfig";
 import { ColorConfig } from "../core/ColorConfig";
+import { detectTransients } from "../audio/Slicer";
 
-const { button, div, h2, select, option, span } = HTML;
+const { button, div, h2, select, option, span, input } = HTML;
 
 const PITCH_NAMES: ReadonlyArray<string> = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
 const DEFAULT_PITCH_MIN: number = 24; // C1
@@ -22,6 +23,9 @@ export class SampleMapPrompt implements Prompt {
     private readonly _cancelButton: HTMLButtonElement = button({ class: "cancelButton" });
     private readonly _okayButton: HTMLButtonElement = button({ class: "okayButton", style: "width:45%;" }, "Okay");
     private readonly _mapContainer: HTMLDivElement = div({ style: "max-height: 400px; overflow-y: scroll; margin: 0.5em 0;" });
+    private readonly _sampleSelect: HTMLSelectElement = select({ style: "width: 14em;" });
+    private readonly _sliceCountInput: HTMLInputElement = input({ type: "number", min: "2", max: "16", value: "8", step: "1", style: "width: 4em;" });
+    private readonly _autoSliceButton: HTMLButtonElement = button({ class: "tip", style: "width: 100%;" }, "Auto-slice selected sample");
 
     // pitch -> sample index (into EditorConfig.customSamples), -1 = default
     private readonly _selections: Map<number, number> = new Map<number, number>();
@@ -31,6 +35,12 @@ export class SampleMapPrompt implements Prompt {
         h2("Sample Map"),
         div({ style: `color: ${ColorConfig.secondaryText}; font-size: smaller; margin-bottom: 0.5em;` },
             "Assign a loaded custom sample to each pitch. Pitches left on \"default\" use the instrument's base chip wave.",
+        ),
+        div({ style: "display: flex; flex-direction: row; align-items: center; gap: 0.5em; margin-bottom: 0.5em;" },
+            span({ style: "font-size: smaller;" }, "Auto-slice:"),
+            this._sampleSelect,
+            this._sliceCountInput,
+            this._autoSliceButton,
         ),
         this._mapContainer,
         div({ style: "display: flex; flex-direction: row-reverse; justify-content: space-between;" },
@@ -54,6 +64,12 @@ export class SampleMapPrompt implements Prompt {
                 sampleNames.push(this._sampleNameFromUrl(url));
             }
         }
+
+        // Populate the auto-slice sample dropdown with custom samples.
+        for (let i: number = 0; i < sampleNames.length; i++) {
+            this._sampleSelect.appendChild(option({ value: i + "" }, sampleNames[i] + " #" + (i + 1)));
+        }
+        this._autoSliceButton.addEventListener("click", this._whenAutoSliceClicked);
 
         for (let pitch: number = DEFAULT_PITCH_MIN; pitch <= DEFAULT_PITCH_MAX; pitch++) {
             const octave: number = Math.floor(pitch / 12) - 1;
@@ -84,6 +100,39 @@ export class SampleMapPrompt implements Prompt {
         this._cancelButton.addEventListener("click", this._close);
     }
 
+    // BreakBox Phase 2: detect transients in the selected sample and assign a
+    // slice to each of the lowest pitches. Slices reference the same sample
+    // index but constrain playback to the detected region.
+    private _whenAutoSliceClicked = (): void => {
+        const sampleIndex: number = +this._sampleSelect.value;
+        if (this._sampleSelect.options.length === 0 || sampleIndex < 0) return;
+        const sliceCount: number = Math.max(2, Math.min(16, Math.round(+this._sliceCountInput.value)));
+        const chipWaveIndex: number = Config.firstIndexForSamplesInChipWaveList + sampleIndex;
+        const wave: any = Config.chipWaves[chipWaveIndex];
+        if (wave == null || wave.samples == null || wave.samples.length <= 0) return;
+
+        const boundaries: number[] = detectTransients(wave.samples, sliceCount);
+
+        // Assign slices to consecutive pitches starting at C1 (pitch 24).
+        const newSelections: Map<number, number> = new Map<number, number>(this._selections);
+        for (let i: number = 0; i < boundaries.length - 1; i++) {
+            const pitch: number = DEFAULT_PITCH_MIN + i;
+            newSelections.set(pitch, sampleIndex);
+            this._selections.set(pitch, sampleIndex);
+            // Reflect the selection in the pitch-row dropdowns.
+            const selectEl: HTMLSelectElement | undefined = this._selects.get(pitch);
+            if (selectEl != null) setSelectedValue(selectEl, sampleIndex);
+        }
+        // Store the slice regions on the instrument so playback is constrained.
+        const instrument = this._doc.song.channels[this._doc.channel].instruments[this._doc.getCurrentInstrument()];
+        instrument.sampleMapSlices.clear();
+        for (let i: number = 0; i < boundaries.length - 1; i++) {
+            const pitch: number = DEFAULT_PITCH_MIN + i;
+            instrument.sampleMapSlices.set(pitch, { start: boundaries[i], end: boundaries[i + 1] });
+        }
+        this._doc.notifier.changed();
+    }
+
     private _sampleNameFromUrl(url: string): string {
         try {
             return decodeURIComponent(url.replace(/^.*\//, "").split("!")[0].split(",")[0]);
@@ -100,6 +149,7 @@ export class SampleMapPrompt implements Prompt {
     public cleanUp = (): void => {
         this._okayButton.removeEventListener("click", this._saveChanges);
         this._cancelButton.removeEventListener("click", this._close);
+        this._autoSliceButton.removeEventListener("click", this._whenAutoSliceClicked);
     }
 
     private _saveChanges = (): void => {

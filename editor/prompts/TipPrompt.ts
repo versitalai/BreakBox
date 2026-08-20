@@ -131,6 +131,7 @@ export class TipPrompt implements Prompt {
 					h2("Per-Note Samples"),
 					p("Assign a different loaded custom sample to each pitch. Each key on the keyboard can trigger its own sample — perfect for slicing a break across keys."),
 					p("Load samples first via Add Samples, then assign them here. Pitches left on \"default\" use the instrument's base chip wave."),
+					p("Auto-slice: pick a loaded sample and a slice count — BreakBox detects transients (onsets) in the break and assigns each slice to a key starting at C1. Each key plays only its slice region."),
 				);
 			} break;
 			case "noteGenerative": {

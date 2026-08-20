@@ -15899,6 +15899,9 @@ li.select2-results__option[role=group] > strong:hover {
             this.isFirstOrder = false;
             this.envelopeComputer = new EnvelopeComputer();
             this.wave = null;
+            this.chipWaveLoopStart = -1;
+            this.chipWaveLoopEnd = -1;
+            this.isUsingAdvancedLoopControls = false;
             this.reset();
         }
         reset() {
@@ -19041,10 +19044,11 @@ li.select2-results__option[role=group] > strong:hover {
             if ((tone.atNoteStart && !transition.isSeamless && !tone.forceContinueAtStart) || tone.freshlyAllocated) {
                 tone.reset();
                 instrumentState.envelopeComputer.reset();
-                if ((instrument.type == 0 || instrument.type == 12) && instrument.isUsingAdvancedLoopControls) {
+                if ((instrument.type == 0 || instrument.type == 12) && (instrument.isUsingAdvancedLoopControls || instrument.sampleMapSlices.size > 0)) {
                     const chipWaveIndex = instrument.getSampleChipWaveIndex(tone.pitches[0]);
                     const chipWaveLength = Config.rawRawChipWaves[chipWaveIndex].samples.length - 1;
-                    const firstOffset = instrument.chipWaveStartOffset / chipWaveLength;
+                    const slice = instrument.sampleMapSlices.get(tone.pitches[0]);
+                    const firstOffset = (slice != null) ? slice.start / chipWaveLength : instrument.chipWaveStartOffset / chipWaveLength;
                     const lastOffset = 0.999999999999999;
                     for (let i = 0; i < Config.maxPitchOrOperatorCount; i++) {
                         tone.phases[i] = instrument.chipWavePlayBackwards ? Math.max(0, Math.min(lastOffset, firstOffset)) : Math.max(0, firstOffset);
@@ -19059,6 +19063,15 @@ li.select2-results__option[role=group] > strong:hover {
             if (instrument.type == 12) {
                 const resolvedWaveIndex = instrument.getSampleChipWaveIndex(tone.pitches[0]);
                 tone.wave = instrument.aliases ? Config.rawChipWaves[resolvedWaveIndex].samples : Config.chipWaves[resolvedWaveIndex].samples;
+                const slice = instrument.sampleMapSlices.get(tone.pitches[0]);
+                if (slice != null) {
+                    const waveLength = tone.wave.length - 1;
+                    tone.chipWaveLoopStart = clamp(0, waveLength + 1, slice.start);
+                    tone.chipWaveLoopEnd = clamp(0, waveLength + 1, slice.end);
+                    if (tone.chipWaveLoopEnd <= tone.chipWaveLoopStart)
+                        tone.chipWaveLoopEnd = tone.chipWaveLoopStart + 1;
+                    tone.isUsingAdvancedLoopControls = true;
+                }
             }
             for (let i = 0; i < Config.maxPitchOrOperatorCount; i++) {
                 tone.phaseDeltas[i] = 0.0;
@@ -19847,7 +19860,7 @@ li.select2-results__option[role=group] > strong:hover {
                 return Synth.fmSynthFunctionCache[fingerprint];
             }
             else if (instrument.type == 0 || instrument.type == 12) {
-                if (instrument.isUsingAdvancedLoopControls) {
+                if (instrument.isUsingAdvancedLoopControls || instrument.sampleMapSlices.size > 0) {
                     return Synth.loopableChipSynth;
                 }
                 return Synth.chipSynth;
@@ -19949,8 +19962,10 @@ li.select2-results__option[role=group] > strong:hover {
             const volumeScale = instrumentState.volumeScale;
             const waveLength = (aliases && instrumentState.type == 8) ? wave.length : wave.length - 1;
 
-            let chipWaveLoopEnd = Math.max(0, Math.min(waveLength, instrumentState.chipWaveLoopEnd));
-            let chipWaveLoopStart = Math.max(0, Math.min(chipWaveLoopEnd - 1, instrumentState.chipWaveLoopStart));
+            let chipWaveLoopEnd = (tone.chipWaveLoopEnd >= 0) ? tone.chipWaveLoopEnd : instrumentState.chipWaveLoopEnd;
+            chipWaveLoopEnd = Math.max(0, Math.min(waveLength, chipWaveLoopEnd));
+            let chipWaveLoopStart = (tone.chipWaveLoopStart >= 0) ? tone.chipWaveLoopStart : instrumentState.chipWaveLoopStart;
+            chipWaveLoopStart = Math.max(0, Math.min(chipWaveLoopEnd - 1, chipWaveLoopStart));
             `;
                 chipSource += `
             let chipWaveLoopLength = chipWaveLoopEnd - chipWaveLoopStart;
@@ -23455,6 +23470,7 @@ li.select2-results__option[role=group] > strong:hover {
             this.detune = 0;
             this.samplePitchLock = false;
             this.sampleMap = new Map();
+            this.sampleMapSlices = new Map();
             this.vibrato = 0;
             this.interval = 0;
             this.vibratoDepth = 0;
@@ -23739,6 +23755,7 @@ li.select2-results__option[role=group] > strong:hover {
                 case 12:
                     this.chipWave = 2;
                     this.sampleMap.clear();
+                    this.sampleMapSlices.clear();
                     this.chord = Config.chords.dictionary["arpeggio"].index;
                     this.isUsingAdvancedLoopControls = false;
                     this.chipWaveLoopStart = 0;
@@ -23893,6 +23910,13 @@ li.select2-results__option[role=group] > strong:hover {
                     sampleMapObject[pitch + ""] = sampleIndex;
                 }
                 instrumentObject["sampleMap"] = sampleMapObject;
+            }
+            if (this.sampleMapSlices.size > 0) {
+                const sliceObject = {};
+                for (const [pitch, slice] of this.sampleMapSlices) {
+                    sliceObject[pitch + ""] = { start: slice.start, end: slice.end };
+                }
+                instrumentObject["sampleMapSlices"] = sliceObject;
             }
             if (effectsIncludeVibrato(this.effects)) {
                 if (this.vibrato == -1) {
@@ -24319,6 +24343,13 @@ li.select2-results__option[role=group] > strong:hover {
                 for (const pitch of Object.keys(instrumentObject["sampleMap"])) {
                     const sampleIndex = +instrumentObject["sampleMap"][pitch];
                     this.sampleMap.set(parseIntWithDefault(pitch, 0), sampleIndex);
+                }
+            }
+            if (instrumentObject["sampleMapSlices"] != undefined) {
+                this.sampleMapSlices.clear();
+                for (const pitch of Object.keys(instrumentObject["sampleMapSlices"])) {
+                    const slice = instrumentObject["sampleMapSlices"][pitch];
+                    this.sampleMapSlices.set(parseIntWithDefault(pitch, 0), { start: (+slice.start) | 0, end: (+slice.end) | 0 });
                 }
             }
             this.vibrato = Config.vibratos.dictionary["none"].index;
@@ -25531,6 +25562,14 @@ li.select2-results__option[role=group] > strong:hover {
                         buffer.push(75, base64IntToCharCode[instrument.sampleMap.size]);
                         for (const [pitch, sampleIndex] of instrument.sampleMap) {
                             buffer.push(base64IntToCharCode[pitch >> 6], base64IntToCharCode[pitch & 0x3f], base64IntToCharCode[sampleIndex & 0x3f]);
+                        }
+                    }
+                    if (instrument.sampleMapSlices.size > 0) {
+                        buffer.push(90, base64IntToCharCode[instrument.sampleMapSlices.size]);
+                        for (const [pitch, slice] of instrument.sampleMapSlices) {
+                            buffer.push(base64IntToCharCode[pitch >> 6], base64IntToCharCode[pitch & 0x3f]);
+                            buffer.push(base64IntToCharCode[slice.start >> 6], base64IntToCharCode[slice.start & 0x3f]);
+                            buffer.push(base64IntToCharCode[slice.end >> 6], base64IntToCharCode[slice.end & 0x3f]);
                         }
                     }
                     if (instrument.type != 4) {
@@ -27287,6 +27326,19 @@ li.select2-results__option[role=group] > strong:hover {
                                 const pitch = (base64CharCodeToInt[compressed.charCodeAt(charIndex++)] << 6) | base64CharCodeToInt[compressed.charCodeAt(charIndex++)];
                                 const sampleIndex = base64CharCodeToInt[compressed.charCodeAt(charIndex++)] & 0x3f;
                                 instrument.sampleMap.set(pitch, sampleIndex);
+                            }
+                        }
+                        break;
+                    case 90:
+                        {
+                            const instrument = this.channels[instrumentChannelIterator].instruments[instrumentIndexIterator];
+                            const sliceCount = base64CharCodeToInt[compressed.charCodeAt(charIndex++)];
+                            instrument.sampleMapSlices.clear();
+                            for (let i = 0; i < sliceCount; i++) {
+                                const pitch = (base64CharCodeToInt[compressed.charCodeAt(charIndex++)] << 6) | base64CharCodeToInt[compressed.charCodeAt(charIndex++)];
+                                const start = (base64CharCodeToInt[compressed.charCodeAt(charIndex++)] << 6) | base64CharCodeToInt[compressed.charCodeAt(charIndex++)];
+                                const end = (base64CharCodeToInt[compressed.charCodeAt(charIndex++)] << 6) | base64CharCodeToInt[compressed.charCodeAt(charIndex++)];
+                                instrument.sampleMapSlices.set(pitch, { start: start, end: end });
                             }
                         }
                         break;
@@ -38287,7 +38339,7 @@ li.select2-results__option[role=group] > strong:hover {
         return Math.pow(volumeMult, 0.25) * 127;
     }
 
-    const { button: button$r, div: div$r, h2: h2$p, input: input$i, select: select$e, option: option$e } = HTML;
+    const { button: button$r, div: div$r, h2: h2$p, input: input$j, select: select$e, option: option$e } = HTML;
     function lerp(low, high, t) {
         return low + t * (high - low);
     }
@@ -38315,13 +38367,13 @@ li.select2-results__option[role=group] > strong:hover {
         constructor(_doc) {
             this._doc = _doc;
             this.outputStarted = false;
-            this._fileName = input$i({ type: "text", style: "width: 10em;", value: Config.jsonFormat + "-Song", maxlength: 250, "autofocus": "autofocus" });
+            this._fileName = input$j({ type: "text", style: "width: 10em;", value: Config.jsonFormat + "-Song", maxlength: 250, "autofocus": "autofocus" });
             this._computedSamplesLabel = div$r({ style: "width: 10em;" }, new Text("0:00"));
-            this._enableIntro = input$i({ type: "checkbox" });
-            this._loopDropDown = input$i({ style: "width: 2em;", type: "number", min: "1", max: "4", step: "1" });
-            this._enableOutro = input$i({ type: "checkbox" });
+            this._enableIntro = input$j({ type: "checkbox" });
+            this._loopDropDown = input$j({ style: "width: 2em;", type: "number", min: "1", max: "4", step: "1" });
+            this._enableOutro = input$j({ type: "checkbox" });
             this._formatSelect = select$e({ style: "width: 100%;" }, option$e({ value: "wav" }, "Export to .wav file."), option$e({ value: "mp3" }, "Export to .mp3 file."), option$e({ value: "no" }, "third option"), option$e({ value: "ogg" }, "Export to .ogg file."), option$e({ value: "opus" }, "Export to .opus file."), option$e({ value: "midi" }, "Export to .mid file."), option$e({ value: "json" }, "Export to .json file."), option$e({ value: "html" }, "Export to .html file."));
-            this._removeWhitespace = input$i({ type: "checkbox" });
+            this._removeWhitespace = input$j({ type: "checkbox" });
             this._removeWhitespaceDiv = div$r({ style: "vertical-align: middle; align-items: center; justify-content: space-between; margin-bottom: 14px;" }, "Remove Whitespace: ", this._removeWhitespace);
             this._oggWarning = div$r({ style: "vertical-align: middle; align-items: center; justify-content: space-between; margin-bottom: 14px;" }, "Warning: .ogg files aren't supported on as many devices as mp3 or wav. So Playback might not be possible on specific devices.");
             this._opusWarning = div$r({ style: "vertical-align: middle; align-items: center; justify-content: space-between; margin-bottom: 14px;" }, "Warning: .opus files aren't supported on as many devices as mp3 or wav. So Playback might not be possible on specific devices.");
@@ -39242,12 +39294,12 @@ You should be redirected to the song at:<br /><br />
         0x51,
     ];
 
-    const { button: button$q, div: div$q, span: span$8, h2: h2$o, input: input$h, br: br$4, select: select$d, option: option$d } = HTML;
+    const { button: button$q, div: div$q, span: span$8, h2: h2$o, input: input$i, br: br$4, select: select$d, option: option$d } = HTML;
     class BeatsPerBarPrompt {
         constructor(_doc) {
             this._doc = _doc;
             this._computedSamplesLabel = div$q({ style: "width: 10em;" }, new Text("0:00"));
-            this._beatsStepper = input$h({ style: "width: 3em; margin-left: 1em;", type: "number", step: "1" });
+            this._beatsStepper = input$i({ style: "width: 3em; margin-left: 1em;", type: "number", step: "1" });
             this._conversionStrategySelect = select$d({ style: "width: 100%;" }, option$d({ value: "splice" }, "Splice beats at end of bars."), option$d({ value: "stretch" }, "Stretch notes to fit in bars."), option$d({ value: "overflow" }, "Overflow notes across bars."));
             this._cancelButton = button$q({ class: "cancelButton" });
             this._okayButton = button$q({ class: "okayButton", style: "width:45%;" }, "Okay");
@@ -39314,16 +39366,16 @@ You should be redirected to the song at:<br /><br />
         }
     }
 
-    const { button: button$p, div: div$p, label: label$3, br: br$3, h2: h2$n, input: input$g } = HTML;
+    const { button: button$p, div: div$p, label: label$3, br: br$3, h2: h2$n, input: input$h } = HTML;
     class ChannelSettingsPrompt {
         constructor(_doc) {
             this._doc = _doc;
-            this._patternsStepper = input$g({ style: "width: 3em; margin-left: 1em;", type: "number", step: "1" });
-            this._pitchChannelStepper = input$g({ style: "width: 3em; margin-left: 1em;", type: "number", step: "1" });
-            this._drumChannelStepper = input$g({ style: "width: 3em; margin-left: 1em;", type: "number", step: "1" });
-            this._modChannelStepper = input$g({ style: "width: 3em; margin-left: 1em;", type: "number", step: "1" });
-            this._layeredInstrumentsBox = input$g({ style: "width: 3em; margin-left: 1em;", type: "checkbox" });
-            this._patternInstrumentsBox = input$g({ style: "width: 3em; margin-left: 1em;", type: "checkbox" });
+            this._patternsStepper = input$h({ style: "width: 3em; margin-left: 1em;", type: "number", step: "1" });
+            this._pitchChannelStepper = input$h({ style: "width: 3em; margin-left: 1em;", type: "number", step: "1" });
+            this._drumChannelStepper = input$h({ style: "width: 3em; margin-left: 1em;", type: "number", step: "1" });
+            this._modChannelStepper = input$h({ style: "width: 3em; margin-left: 1em;", type: "number", step: "1" });
+            this._layeredInstrumentsBox = input$h({ style: "width: 3em; margin-left: 1em;", type: "checkbox" });
+            this._patternInstrumentsBox = input$h({ style: "width: 3em; margin-left: 1em;", type: "checkbox" });
             this._cancelButton = button$p({ class: "cancelButton" });
             this._okayButton = button$p({ class: "okayButton", style: "width:45%;" }, "Okay");
             this.container = div$p({ class: "prompt noSelection", style: "width: 250px; text-align: right;" }, h2$n("Channel Settings"), label$3({ style: "display: flex; flex-direction: row; align-items: center; height: 2em; justify-content: flex-end;" }, "Pitch channels:", this._pitchChannelStepper), label$3({ style: "display: flex; flex-direction: row; align-items: center; height: 2em; justify-content: flex-end;" }, "Drum channels:", this._drumChannelStepper), div$p({ style: "display: flex; flex-direction: row; align-items: center; height: 2em; justify-content: flex-end;" }, "Mod channels:", this._modChannelStepper), label$3({ style: "display: flex; flex-direction: row; align-items: center; height: 2em; justify-content: flex-end;" }, "Available patterns per channel:", this._patternsStepper), label$3({ style: "display: flex; flex-direction: row; align-items: center; height: 2em; justify-content: flex-end;" }, "Simultaneous instruments", br$3(), "per channel:", this._layeredInstrumentsBox), label$3({ style: "display: flex; flex-direction: row; align-items: center; height: 2em; justify-content: flex-end;" }, "Different instruments", br$3(), "per pattern:", this._patternInstrumentsBox), div$p({ style: "display: flex; flex-direction: row-reverse; justify-content: space-between;" }, this._okayButton), this._cancelButton);
@@ -40553,15 +40605,15 @@ You should be redirected to the song at:<br /><br />
         }
     }
 
-    const { button: button$m, div: div$m, h2: h2$k, input: input$f, label: label$2, br: br$2 } = HTML;
+    const { button: button$m, div: div$m, h2: h2$k, input: input$g, label: label$2, br: br$2 } = HTML;
     class InstrumentExportPrompt {
         constructor(_doc) {
             this._doc = _doc;
             this._cancelButton = button$m({ class: "cancelButton" });
             this._exportButton = button$m({ class: "exportButton", style: "width:45%;" }, "Export");
-            this._exportMultipleBox = input$f({ style: "width: 3em; margin-left: 1em;", type: "checkbox" });
+            this._exportMultipleBox = input$g({ style: "width: 3em; margin-left: 1em;", type: "checkbox" });
             this._channelName = this._doc.song.channels[this._doc.channel].name == "" ? Config.jsonFormat + "-Instrument" : this._doc.song.channels[this._doc.channel].name;
-            this._fileName = input$f({ type: "text", style: "width: 10em;", value: this._channelName, maxlength: 250, "autofocus": "autofocus" });
+            this._fileName = input$g({ type: "text", style: "width: 10em;", value: this._channelName, maxlength: 250, "autofocus": "autofocus" });
             this.container = div$m({ class: "prompt noSelection", style: "width: 200px;" }, h2$k("Export Instruments Options"), div$m({ style: "display: flex; flex-direction: row; align-items: center; justify-content: space-between;" }, "File name:", this._fileName), label$2({ style: "display: flex; flex-direction: row; align-items: center; height: 2em; justify-content: flex-end;" }, "Export all instruments", br$2(), "in channel:", this._exportMultipleBox), div$m({ style: "display: flex; flex-direction: row-reverse; justify-content: space-between;" }, this._exportButton), this._cancelButton);
             this._close = () => {
                 this._doc.undo();
@@ -40629,13 +40681,13 @@ You should be redirected to the song at:<br /><br />
         }
     }
 
-    const { button: button$l, div: div$l, h2: h2$j, input: input$e, select: select$c, option: option$c, code: code$1 } = HTML;
+    const { button: button$l, div: div$l, h2: h2$j, input: input$f, select: select$c, option: option$c, code: code$1 } = HTML;
     class InstrumentImportPrompt {
         constructor(_doc) {
             this._doc = _doc;
             this._cancelButton = button$l({ class: "cancelButton" });
             this._importStrategySelect = select$c({ style: "width: 100%;" }, option$c({ value: "append" }, "Append instruments to the end of the list."), option$c({ value: "replace" }, "Replace only the selected instrument."), option$c({ value: "all" }, "Replace all instruments in the channel."));
-            this._fileInput = input$e({ type: "file", accept: ".json,application/json" });
+            this._fileInput = input$f({ type: "file", accept: ".json,application/json" });
             this._strategyInfoText = div$l({ style: "text-align: left;" }, "You must enable either ", code$1("Simultaneous instruments per channel"), " or ", code$1("Different instruments per pattern"), " to change the import strategy.");
             this.container = div$l({ class: "prompt noSelection", style: "width: 300px;" }, h2$j("Import Instrument(s)"), this._strategyInfoText, div$l({ style: "display: flex; flex-direction: row; align-items: center; height: 2em; justify-content: flex-end;" }, div$l({ class: "selectContainer", style: "width: 100%;" }, this._importStrategySelect)), this._fileInput, this._cancelButton);
             this._whenFileSelected = () => {
@@ -40778,7 +40830,7 @@ You should be redirected to the song at:<br /><br />
         }
     }
 
-    const { button: button$k, div: div$k, h2: h2$i, input: input$d } = HTML;
+    const { button: button$k, div: div$k, h2: h2$i, input: input$e } = HTML;
     function gcd(x, y) {
         while (y !== 0) {
             const z = x % y;
@@ -40896,17 +40948,17 @@ You should be redirected to the song at:<br /><br />
             this._barPreviewGoToLastButton = button$k({ style: "height: auto; min-height: var(--button-size); margin-left: 1em;" }, SVG.svg({ width: "26", height: "26", viewBox: "-13 -14 26 26", "pointer-events": "none" }, SVG.rect({ x: "4", y: "-6", width: "2", height: "12", fill: ColorConfig.primaryText }), SVG.path({ d: "M -6 -6 L -6 6 L 3 0 z", fill: ColorConfig.primaryText })));
             this._clockWire = SVG.circle({ cx: this._clockWidth / 2, cy: this._clockHeight / 2, r: this._clockRadius, stroke: ColorConfig.primaryText, "stroke-width": "0.5", fill: "none" });
             this._clockPoints = SVG.svg({ "pointer-events": "none" });
-            this._stepsStepper = input$d({ style: "width: 3em; margin-left: 1em;", type: "number", min: this._minSteps, max: this._maxSteps, value: "8", step: "1" });
-            this._pulsesStepper = input$d({ style: "width: 3em; margin-left: 1em;", type: "number", min: "0", max: "8", value: "5", step: "1" });
-            this._rotationStepper = input$d({ style: "width: 3em; margin-left: 1em;", type: "number", min: "0", max: this._maxSteps, value: "0", step: "1" });
-            this._stepSizeNumeratorStepper = input$d({ style: "width: 3em; margin-left: 1em;", type: "number", min: "1", max: Config.partsPerBeat, value: "1", step: "1" });
-            this._stepSizeDenominatorStepper = input$d({ style: "width: 3em; margin-left: 1em;", type: "number", min: "1", max: Config.partsPerBeat, value: "4", step: "1" });
-            this._channelStepper = input$d({ style: "width: 3em; margin-left: 1em;", type: "number", min: "1", max: this._maxChannel + 1, value: "1", step: "1" });
-            this._pitchStepper = input$d({ style: "width: 3em; margin-left: 1em;", type: "number", min: "0", max: Config.maxPitch, value: "0", step: "1" });
-            this._barAmountStepper = input$d({ style: "width: 3em; margin-left: 1em;", type: "number", min: "1", max: Config.barCountMax, value: "1", step: "1" });
+            this._stepsStepper = input$e({ style: "width: 3em; margin-left: 1em;", type: "number", min: this._minSteps, max: this._maxSteps, value: "8", step: "1" });
+            this._pulsesStepper = input$e({ style: "width: 3em; margin-left: 1em;", type: "number", min: "0", max: "8", value: "5", step: "1" });
+            this._rotationStepper = input$e({ style: "width: 3em; margin-left: 1em;", type: "number", min: "0", max: this._maxSteps, value: "0", step: "1" });
+            this._stepSizeNumeratorStepper = input$e({ style: "width: 3em; margin-left: 1em;", type: "number", min: "1", max: Config.partsPerBeat, value: "1", step: "1" });
+            this._stepSizeDenominatorStepper = input$e({ style: "width: 3em; margin-left: 1em;", type: "number", min: "1", max: Config.partsPerBeat, value: "4", step: "1" });
+            this._channelStepper = input$e({ style: "width: 3em; margin-left: 1em;", type: "number", min: "1", max: this._maxChannel + 1, value: "1", step: "1" });
+            this._pitchStepper = input$e({ style: "width: 3em; margin-left: 1em;", type: "number", min: "0", max: Config.maxPitch, value: "0", step: "1" });
+            this._barAmountStepper = input$e({ style: "width: 3em; margin-left: 1em;", type: "number", min: "1", max: Config.barCountMax, value: "1", step: "1" });
             this._extendUntilLoopButton = button$k({ style: "height: auto; min-height: var(--button-size); margin-left: 1em;" }, "Extend until loop");
-            this._generateFadingNotesBox = input$d({ type: "checkbox", style: "width: 1em; padding: 0; margin-left: 1em;" });
-            this._invertBox = input$d({ type: "checkbox", style: "width: 1em; padding: 0; margin-left: 1em;" });
+            this._generateFadingNotesBox = input$e({ type: "checkbox", style: "width: 1em; padding: 0; margin-left: 1em;" });
+            this._invertBox = input$e({ type: "checkbox", style: "width: 1em; padding: 0; margin-left: 1em;" });
             this._okayButton = button$k({ class: "okayButton", style: "width: 45%;" }, "Okay");
             this._cancelButton = button$k({ class: "cancelButton" });
             this.container = div$k({ class: "prompt noSelection", style: "width: 600px;" }, h2$i("Generate Euclidean Rhythm"), div$k({ style: "display: flex; flex-direction: row; align-items: center;" }, this._sequenceButtonContainer), div$k({ style: "display: flex; flex-direction: row; align-items: center; justify-content: space-between;" }, div$k({ style: "flex-grow: 0; flex-shrink: 0;" }, this._barPreviewGoToFirstButton, this._barPreviewGoBackButton), this._barPreviewLabel, div$k({ style: "flex-grow: 0; flex-shrink: 0;" }, this._barPreviewGoForwardButton, this._barPreviewGoToLastButton)), div$k({ style: "display: flex; flex-direction: row; align-items: center; justify-content: center;" }, SVG.svg({ "pointer-events": "none", style: "touch-action: none; overflow: hidden;", width: "100%", height: "20px", viewBox: `0 0 ${this._barPreviewWidth} ${this._barPreviewHeight}`, preserveAspectRatio: "none" }, this._barPreviewBackground, this._barPreviewSteps)), div$k({ style: "display: flex; flex-direction: row; align-items: center; justify-content: space-evenly;" }, div$k({ style: "max-width: 150px; height: 100%;" }, SVG.svg({ "pointer-events": "none", width: "100%", height: "100%", style: "touch-action: none; overflow: hidden; margin-right: 1.5em; max-width: 150px; height: 100%;", viewBox: `0 0 ${this._clockWidth} ${this._clockHeight}`, preserveAspectRatio: "none" }, this._clockWire, this._clockPoints)), div$k({ style: "display: flex; height: 100%;" }, div$k({ style: "flex-grow: 1; " }, div$k({ style: "display: flex; flex-direction: row; align-items: center; height: 3em; justify-content: flex-end;" }, div$k({ style: `text-align: right; flex-grow: 1; color: ${ColorConfig.primaryText};` }, "Steps"), this._stepsStepper), div$k({ style: "display: flex; flex-direction: row; align-items: center; height: 3em; justify-content: flex-end; margin-top: 0.5em;" }, div$k({ style: `text-align: right; flex-grow: 1; color: ${ColorConfig.primaryText};` }, "Pulses"), this._pulsesStepper), div$k({ style: "display: flex; flex-direction: row; align-items: center; height: 3em; justify-content: flex-end; margin-top: 0.5em;" }, div$k({ style: `text-align: right; flex-grow: 1; color: ${ColorConfig.primaryText};` }, "Rotation"), this._rotationStepper)), div$k({ style: "flex-grow: 1; margin-left: 1em;" }, div$k({ style: "display: flex; flex-direction: row; align-items: center; height: 3em; justify-content: flex-end; margin-bottom: 1em;" }, div$k({ style: `text-align: right; flex-grow: 1; color: ${ColorConfig.primaryText};` }, "Size"), div$k({ style: "display: flex; flex-direction: column;" }, this._stepSizeNumeratorStepper, this._stepSizeDenominatorStepper)), div$k({ style: "display: flex; flex-direction: row; align-items: center; height: 3em; justify-content: flex-end; margin-top: 0.5em;" }, div$k({ style: `text-align: right; flex-grow: 1; color: ${ColorConfig.primaryText};` }, "Channel"), this._channelStepper), div$k({ style: "display: flex; flex-direction: row; align-items: center; height: 3em; justify-content: flex-end; margin-top: 0.5em;" }, div$k({ style: `text-align: right; flex-grow: 1; color: ${ColorConfig.primaryText};` }, "Pitch"), this._pitchStepper)))), div$k({ style: "display: flex; flex-direction: row; align-items: center; justify-content: flex-end;" }, div$k({ style: `text-align: right; color: ${ColorConfig.primaryText};` }, "Generate fading notes"), this._generateFadingNotesBox, div$k({ style: `text-align: right; color: ${ColorConfig.primaryText}; margin-left: 1em;` }, "Invert"), this._invertBox), div$k({ style: "display: flex; flex-direction: row; align-items: center; justify-content: flex-end;" }, div$k({ style: `text-align: right; color: ${ColorConfig.primaryText};` }, "Length (in bars)"), this._barAmountStepper, this._extendUntilLoopButton), div$k({ style: "display: flex; flex-direction: row-reverse; justify-content: space-between;" }, this._okayButton), this._cancelButton);
@@ -42282,11 +42334,11 @@ You should be redirected to the song at:<br /><br />
         }
     }
 
-    const { button: button$j, p: p$6, div: div$j, h2: h2$h, input: input$c, select: select$b, option: option$b } = HTML;
+    const { button: button$j, p: p$6, div: div$j, h2: h2$h, input: input$d, select: select$b, option: option$b } = HTML;
     class ImportPrompt {
         constructor(_doc) {
             this._doc = _doc;
-            this._fileInput = input$c({ type: "file", accept: ".json,application/json,.mid,.midi,audio/midi,audio/x-midi" });
+            this._fileInput = input$d({ type: "file", accept: ".json,application/json,.mid,.midi,audio/midi,audio/x-midi" });
             this._cancelButton = button$j({ class: "cancelButton" });
             this._modeImportSelect = select$b({ style: "width: 100%;" }, option$b({ value: "auto" }, "Auto-detect mode (for json)"), option$b({ value: "BeepBox" }, "BeepBox"), option$b({ value: "ModBox" }, "ModBox"), option$b({ value: "JummBox" }, "JummBox"), option$b({ value: "SynthBox" }, "SynthBox"), option$b({ value: "GoldBox" }, "GoldBox"), option$b({ value: "PaandorasBox" }, "PaandorasBox"), option$b({ value: "UltraBox" }, "UltraBox"), option$b({ value: "slarmoosbox" }, "Slarmoo's Box"));
             this.container = div$j({ class: "prompt noSelection", style: "width: 300px;" }, h2$h("Import"), p$6({ style: "text-align: left; margin: 0.5em 0;" }, "BeepBox songs can be exported and re-imported as .json files. You could also use other means to make .json files for BeepBox as long as they follow the same structure."), p$6({ style: "text-align: left; margin: 0.5em 0;" }, "BeepBox can also (crudely) import .mid files. There are many tools available for creating .mid files. Shorter and simpler songs are more likely to work well."), this._modeImportSelect, this._fileInput, this._cancelButton);
@@ -43214,21 +43266,21 @@ You should be redirected to the song at:<br /><br />
     }
     ChannelRow.patternHeight = 28;
 
-    const { button: button$i, label: label$1, div: div$i, form, h2: h2$g, input: input$b } = HTML;
+    const { button: button$i, label: label$1, div: div$i, form, h2: h2$g, input: input$c } = HTML;
     class LayoutPrompt {
         constructor(_doc) {
             this._doc = _doc;
-            this._fileInput = input$b({ type: "file", accept: ".json,application/json,.mid,.midi,audio/midi,audio/x-midi" });
+            this._fileInput = input$c({ type: "file", accept: ".json,application/json,.mid,.midi,audio/midi,audio/x-midi" });
             this._okayButton = button$i({ class: "okayButton", style: "width:45%;" }, "Okay");
             this._cancelButton = button$i({ class: "cancelButton" });
-            this._form = form({ style: "display: flex; gap: 10px; flex-wrap: wrap; justify-content: center;" }, label$1({ class: "layout-option" }, input$b({ type: "radio", name: "layout", value: "small" }), SVG(`\
+            this._form = form({ style: "display: flex; gap: 10px; flex-wrap: wrap; justify-content: center;" }, label$1({ class: "layout-option" }, input$c({ type: "radio", name: "layout", value: "small" }), SVG(`\
 					<svg viewBox="-4 -1 28 22">
 						<rect x="0" y="0" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1"/>
 						<rect x="2" y="2" width="11" height="10" fill="currentColor"/>
 						<rect x="14" y="2" width="4" height="16" fill="currentColor"/>
 						<rect x="2" y="13" width="11" height="5" fill="currentColor"/>
 					</svg>
-				`), div$i("Small")), label$1({ class: "layout-option" }, input$b({ type: "radio", name: "layout", value: "long" }), SVG(`\
+				`), div$i("Small")), label$1({ class: "layout-option" }, input$c({ type: "radio", name: "layout", value: "long" }), SVG(`\
 					<svg viewBox="-1 -1 28 22">
 						<rect x="0" y="0" width="26" height="20" fill="none" stroke="currentColor" stroke-width="1"/>
 						<rect x="2" y="2" width="12" height="10" fill="currentColor"/>
@@ -43236,14 +43288,14 @@ You should be redirected to the song at:<br /><br />
 						<rect x="20" y="2" width="4" height="10" fill="currentColor"/>
 						<rect x="2" y="13" width="22" height="5" fill="currentColor"/>
 					</svg>
-				`), div$i("Long")), label$1({ class: "layout-option" }, input$b({ type: "radio", name: "layout", value: "tall" }), SVG(`\
+				`), div$i("Long")), label$1({ class: "layout-option" }, input$c({ type: "radio", name: "layout", value: "tall" }), SVG(`\
 					<svg viewBox="-1 -1 28 22">
 						<rect x="0" y="0" width="26" height="20" fill="none" stroke="currentColor" stroke-width="1"/>
 						<rect x="11" y="2" width="8" height="16" fill="currentColor"/>
 						<rect x="20" y="2" width="4" height="16" fill="currentColor"/>
 						<rect x="2" y="2" width="8" height="16" fill="currentColor"/>
 					</svg>
-				`), div$i("Tall")), label$1({ class: "layout-option" }, input$b({ type: "radio", name: "layout", value: "wide" }), SVG(`\
+				`), div$i("Tall")), label$1({ class: "layout-option" }, input$c({ type: "radio", name: "layout", value: "wide" }), SVG(`\
 					<svg viewBox="-1 -1 28 22">
 						<rect x="0" y="0" width="26" height="20" fill="none" stroke="currentColor" stroke-width="1"/>
 						<rect x="2" y="2" width="4" height="16" fill="currentColor"/>
@@ -43251,7 +43303,7 @@ You should be redirected to the song at:<br /><br />
 						<rect x="21.5" y="2" width="2.5" height="16" fill="currentColor"/>
 						<rect x="7" y="2" width="10" height="16" fill="currentColor"/>
 					</svg>
-				`), div$i("Wide (JB)")), label$1({ class: "layout-option" }, input$b({ type: "radio", name: "layout", value: "AbyssBox Special" }), SVG(`\
+				`), div$i("Wide (JB)")), label$1({ class: "layout-option" }, input$c({ type: "radio", name: "layout", value: "AbyssBox Special" }), SVG(`\
 					<svg viewBox="-1 -1 28 22">
 						<rect x="0" y="0" width="26" height="20" fill="none" stroke="currentColor" stroke-width="1"/>
 						<rect x="7" y="2" width="4" height="11" fill="currentColor"/>
@@ -43259,14 +43311,14 @@ You should be redirected to the song at:<br /><br />
 						<rect x="10" y="2" width="14" height="11" fill="currentColor"/>
 						<rect x="2" y="14" width="22" height="4" fill="currentColor"/>
 					</svg>
-				`), div$i("Flipped (AB)")), label$1({ class: "layout-option" }, input$b({ type: "radio", name: "layout", value: "focus" }), SVG(`\
+				`), div$i("Flipped (AB)")), label$1({ class: "layout-option" }, input$c({ type: "radio", name: "layout", value: "focus" }), SVG(`\
 					<svg viewBox="-1 -1 28 22">
 						<rect x="0" y="0" width="26" height="20" fill="none" stroke="currentColor" stroke-width="1"/>
 						<rect x="2" y="2" width="17" height="10" fill="currentColor"/>
 						<rect x="20" y="2" width="4" height="16" fill="currentColor"/>
 						<rect x="2" y="13" width="17" height="5" fill="currentColor"/>
 					</svg>
-				`), div$i("Focus (AB)")), label$1({ class: "layout-option" }, input$b({ type: "radio", name: "layout", value: "long (AB)" }), SVG(`\
+				`), div$i("Focus (AB)")), label$1({ class: "layout-option" }, input$c({ type: "radio", name: "layout", value: "long (AB)" }), SVG(`\
 					<svg viewBox="-1 -1 28 22">
 						<rect x="0" y="0" width="26" height="20" fill="none" stroke="currentColor" stroke-width="1"/>
 						<rect x="2" y="2" width="12" height="10" fill="currentColor"/>
@@ -43274,7 +43326,7 @@ You should be redirected to the song at:<br /><br />
 						<rect x="20" y="2" width="4" height="16" fill="currentColor"/>
 						<rect x="2" y="13" width="12" height="5" fill="currentColor"/>
 					</svg>
-				`), div$i("Long (AB)")), label$1({ class: "layout-option" }, input$b({ type: "radio", name: "layout", value: "theatre" }), SVG(`\
+				`), div$i("Long (AB)")), label$1({ class: "layout-option" }, input$c({ type: "radio", name: "layout", value: "theatre" }), SVG(`\
 					<svg viewBox="-1 -1 28 22">
 						<rect x="0" y="0" width="26" height="20" fill="none" stroke="currentColor" stroke-width="1"/>
 						<rect x="2" y="2" width="22" height="10" fill="currentColor"></rect>
@@ -43282,7 +43334,7 @@ You should be redirected to the song at:<br /><br />
 						<rect x="19" y="13" width="2" height="5" fill="currentColor"></rect>
 						<rect x="22" y="13" width="2" height="5" fill="currentColor"></rect>
 					</svg>
-				`), div$i("Theatre (AB)")), label$1({ class: "layout-option" }, input$b({ type: "radio", name: "layout", value: "Upside Down" }), SVG(`\
+				`), div$i("Theatre (AB)")), label$1({ class: "layout-option" }, input$c({ type: "radio", name: "layout", value: "Upside Down" }), SVG(`\
 					<svg viewBox="-1 -1 28 22">
 						<rect x="0" y="0" width="26" height="20" fill="none" stroke="currentColor" stroke-width="1"/>
 						<rect x="7" y="8" width="17" height="10" fill="currentColor"/> /* pattern area */
@@ -44011,7 +44063,7 @@ You should be redirected to the song at:<br /><br />
         }
     }
 
-    const { button: button$h, div: div$h, h2: h2$f, input: input$a } = HTML;
+    const { button: button$h, div: div$h, h2: h2$f, input: input$b } = HTML;
     class LimiterCanvas {
         constructor(lim) {
             this._editorWidth = 200;
@@ -44143,13 +44195,13 @@ You should be redirected to the song at:<br /><br />
             this._songEditor = _songEditor;
             this.limiterCanvas = new LimiterCanvas(this);
             this._playButton = button$h({ style: "width: 55%;", type: "button" });
-            this.limitDecaySlider = input$a({ title: "limit decay", style: `width: 5em; flex-grow: 1; margin: 0;`, type: "range", min: "1", max: "30", value: "4", step: "1" });
-            this.limitRiseSlider = input$a({ title: "limit rise", style: `width: 5em; flex-grow: 1; margin: 0;`, type: "range", min: "2000", max: "10000", value: "4000", step: "250" });
-            this.compressionThresholdSlider = input$a({ title: "compressor threshold", style: `width: 100%; flex-grow: 1; margin: 0;`, type: "range", min: "0", max: "1.1", value: "1", step: "0.05" });
-            this.limitThresholdSlider = input$a({ title: "limiter threshold", style: `width: 100%; flex-grow: 1; margin: 0;`, type: "range", min: "0", max: "2", value: "1", step: "0.05" });
-            this.compressionRatioSlider = input$a({ title: "compressor ratio", style: `width: 100%; flex-grow: 1; margin: 0;`, type: "range", min: "0", max: "20", value: "10", step: "1" });
-            this.limitRatioSlider = input$a({ title: "limiter ratio", style: `width: 100%; flex-grow: 1; margin: 0;`, type: "range", min: "0", max: "20", value: "10", step: "1" });
-            this.masterGainSlider = input$a({ title: "master gain", style: `width: 5em; flex-grow: 1; margin: 0;`, type: "range", min: "0", max: "5", value: "1", step: "0.02" });
+            this.limitDecaySlider = input$b({ title: "limit decay", style: `width: 5em; flex-grow: 1; margin: 0;`, type: "range", min: "1", max: "30", value: "4", step: "1" });
+            this.limitRiseSlider = input$b({ title: "limit rise", style: `width: 5em; flex-grow: 1; margin: 0;`, type: "range", min: "2000", max: "10000", value: "4000", step: "250" });
+            this.compressionThresholdSlider = input$b({ title: "compressor threshold", style: `width: 100%; flex-grow: 1; margin: 0;`, type: "range", min: "0", max: "1.1", value: "1", step: "0.05" });
+            this.limitThresholdSlider = input$b({ title: "limiter threshold", style: `width: 100%; flex-grow: 1; margin: 0;`, type: "range", min: "0", max: "2", value: "1", step: "0.05" });
+            this.compressionRatioSlider = input$b({ title: "compressor ratio", style: `width: 100%; flex-grow: 1; margin: 0;`, type: "range", min: "0", max: "20", value: "10", step: "1" });
+            this.limitRatioSlider = input$b({ title: "limiter ratio", style: `width: 100%; flex-grow: 1; margin: 0;`, type: "range", min: "0", max: "20", value: "10", step: "1" });
+            this.masterGainSlider = input$b({ title: "master gain", style: `width: 5em; flex-grow: 1; margin: 0;`, type: "range", min: "0", max: "5", value: "1", step: "0.02" });
             this.inVolumeHistoricTimer = 0.0;
             this.inVolumeHistoricCap = 0.0;
             this.outVolumeHistoricTimer = 0.0;
@@ -44300,7 +44352,7 @@ You should be redirected to the song at:<br /><br />
         }
     }
 
-    const { button: button$g, div: div$g, h2: h2$e, input: input$9, p: p$5 } = HTML;
+    const { button: button$g, div: div$g, h2: h2$e, input: input$a, p: p$5 } = HTML;
     class CustomScalePrompt {
         constructor(_doc) {
             this._doc = _doc;
@@ -44332,7 +44384,7 @@ You should be redirected to the song at:<br /><br />
             this._flags = _doc.song.scaleCustom.slice();
             let scaleHolder = div$g({});
             for (var i = Config.pitchesPerOctave - 1; i > 0; i--) {
-                this._scaleFlags[i] = input$9({ type: "checkbox", style: "width: 1em; padding: 0; margin-right: 4em;", "checked": this._flags[i], "value": i });
+                this._scaleFlags[i] = input$a({ type: "checkbox", style: "width: 1em; padding: 0; margin-right: 4em;", "checked": this._flags[i], "value": i });
                 this._scaleRows[i] = div$g({ style: "text-align: right; height: 2em;" }, "Note " + i + ":", this._scaleFlags[i]);
                 scaleHolder.appendChild(this._scaleRows[i]);
                 console.log("new!");
@@ -44651,11 +44703,11 @@ You should be redirected to the song at:<br /><br />
         }
     }
 
-    const { button: button$f, div: div$f, span: span$6, h2: h2$d, input: input$8, br: br$1, select: select$a, option: option$a } = HTML;
+    const { button: button$f, div: div$f, span: span$6, h2: h2$d, input: input$9, br: br$1, select: select$a, option: option$a } = HTML;
     class MoveNotesSidewaysPrompt {
         constructor(_doc) {
             this._doc = _doc;
-            this._beatsStepper = input$8({ style: "width: 3em; margin-left: 1em;", type: "number", step: "0.01", value: "0" });
+            this._beatsStepper = input$9({ style: "width: 3em; margin-left: 1em;", type: "number", step: "0.01", value: "0" });
             this._conversionStrategySelect = select$a({ style: "width: 100%;" }, option$a({ value: "overflow" }, "Overflow notes across bars."), option$a({ value: "wrapAround" }, "Wrap notes around within bars."));
             this._cancelButton = button$f({ class: "cancelButton" });
             this._okayButton = button$f({ class: "okayButton", style: "width:45%;" }, "Okay");
@@ -48322,12 +48374,12 @@ You should be redirected to the song at:<br /><br />
         }
     }
 
-    const { button: button$d, div: div$d, span: span$5, h2: h2$c, input: input$7, br, select: select$9, option: option$9 } = HTML;
+    const { button: button$d, div: div$d, span: span$5, h2: h2$c, input: input$8, br, select: select$9, option: option$9 } = HTML;
     class SongDurationPrompt {
         constructor(_doc) {
             this._doc = _doc;
             this._computedSamplesLabel = div$d({ style: "width: 10em;" }, new Text("0:00"));
-            this._barsStepper = input$7({ style: "width: 3em; margin-left: 1em;", type: "number", step: "1" });
+            this._barsStepper = input$8({ style: "width: 3em; margin-left: 1em;", type: "number", step: "1" });
             this._positionSelect = select$9({ style: "width: 100%;" }, option$9({ value: "end" }, "Apply change at end of song."), option$9({ value: "beginning" }, "Apply change at beginning of song."));
             this._cancelButton = button$d({ class: "cancelButton" });
             this._okayButton = button$d({ class: "okayButton", style: "width:45%;" }, "Okay");
@@ -48473,7 +48525,7 @@ You should be redirected to the song at:<br /><br />
         }
     }
 
-    const { button: button$a, label, div: div$a, p: p$2, a: a$2, h2: h2$9, input: input$6, select: select$6, option: option$6 } = HTML;
+    const { button: button$a, label, div: div$a, p: p$2, a: a$2, h2: h2$9, input: input$7, select: select$6, option: option$6 } = HTML;
     class RecordingSetupPrompt {
         constructor(_doc) {
             this._doc = _doc;
@@ -48481,12 +48533,12 @@ You should be redirected to the song at:<br /><br />
             this._keyboardLayout = select$6({ style: "width: 100%;" }, option$6({ value: "wickiHayden" }, "Wicki-Hayden"), option$6({ value: "songScale" }, "selected song scale"), option$6({ value: "pianoAtC" }, "piano starting at C"), option$6({ value: "pianoAtA" }, "piano starting at A"), option$6({ value: "pianoTransposingC" }, "piano transposing C to song key"), option$6({ value: "pianoTransposingA" }, "piano transposing A to song key"));
             this._bassOffset = select$6({ style: "width: 100%;" }, option$6({ value: "0" }, "disabled"), option$6({ value: "-1" }, "before"), option$6({ value: "1" }, "after"));
             this._keyboardLayoutPreview = div$a({ style: "display: grid; row-gap: 4px; margin: 4px auto; font-size: 10px;" });
-            this._enableMidi = input$6({ style: "width: 2em; margin-left: 1em;", type: "checkbox" });
-            this._showRecordButton = input$6({ style: "width: 2em; margin-left: 1em;", type: "checkbox" });
-            this._snapRecordedNotesToRhythm = input$6({ style: "width: 2em; margin-left: 1em;", type: "checkbox" });
-            this._ignorePerformedNotesNotInScale = input$6({ style: "width: 2em; margin-left: 1em;", type: "checkbox" });
-            this._metronomeCountIn = input$6({ style: "width: 2em; margin-left: 1em;", type: "checkbox" });
-            this._metronomeWhileRecording = input$6({ style: "width: 2em; margin-left: 1em;", type: "checkbox" });
+            this._enableMidi = input$7({ style: "width: 2em; margin-left: 1em;", type: "checkbox" });
+            this._showRecordButton = input$7({ style: "width: 2em; margin-left: 1em;", type: "checkbox" });
+            this._snapRecordedNotesToRhythm = input$7({ style: "width: 2em; margin-left: 1em;", type: "checkbox" });
+            this._ignorePerformedNotesNotInScale = input$7({ style: "width: 2em; margin-left: 1em;", type: "checkbox" });
+            this._metronomeCountIn = input$7({ style: "width: 2em; margin-left: 1em;", type: "checkbox" });
+            this._metronomeWhileRecording = input$7({ style: "width: 2em; margin-left: 1em;", type: "checkbox" });
             this._okayButton = button$a({ class: "okayButton", style: "width:45%;" }, "Okay");
             this._cancelButton = button$a({ class: "cancelButton" });
             this.container = div$a({ class: "prompt noSelection recordingSetupPrompt", style: "width: 600px; text-align: right; max-height: 90%;" }, h2$9({ style: "align-self: center;" }, "Note Recording Setup"), div$a({ style: "display: grid; overflow-y: auto; overflow-x: hidden; flex-shrink: 1;" }, p$2("JukeBox can record notes as you perform them. You can start recording by pressing Ctrl+Space (or " + EditorConfig.ctrlSymbol + "P)."), label({ style: "display: flex; flex-direction: row; align-items: center; height: 2em; justify-content: center;" }, "Add ● record button next to ▶ play button:", this._showRecordButton), label({ style: "display: flex; flex-direction: row; align-items: center; height: 2em; justify-content: center;" }, "Snap recorded notes to the song's rhythm:", this._snapRecordedNotesToRhythm), label({ style: "display: flex; flex-direction: row; align-items: center; height: 2em; justify-content: center;" }, "Ignore notes not in the song's scale:", this._ignorePerformedNotesNotInScale), p$2("While recording, you can perform notes on your keyboard!"), label({ style: "display: flex; flex-direction: row; align-items: center; margin-top: 0.5em; margin-bottom: 0.5em; height: 2em; justify-content: center;" }, "Keyboard layout:", div$a({ class: "selectContainer", style: "width: 50%; margin-left: 1em;" }, this._keyboardLayout)), this._keyboardLayoutPreview, p$2("When not recording, you can use the computer keyboard either for shortcuts (like C and V for copy and paste) or for performing notes, depending on this mode:"), label({ style: "display: flex; margin-top: 0.5em; margin-bottom: 0.5em; flex-direction: row; align-items: center; height: 2em; justify-content: center;" }, div$a({ class: "selectContainer", style: "width: 50%;" }, this._keyboardMode)), p$2("Performing music takes practice! Try slowing the tempo and using this metronome to help you keep a rhythm."), label({ style: "display: flex; flex-direction: row; align-items: center; height: 2em; justify-content: center;" }, "Hear metronome while recording:", this._metronomeWhileRecording), label({ style: "display: flex; flex-direction: row; align-items: center; height: 2em; justify-content: center;" }, "Count-in 1 bar of metronome before recording:", this._metronomeCountIn), p$2("If you have a ", a$2({ href: "https://caniuse.com/midi", target: "_blank" }, "compatible browser"), " on a device connected to a MIDI keyboard, you can use it to perform notes in JukeBox! (Or you could buy ", a$2({ href: "https://imitone.com/", target: "_blank" }, "Imitone"), " or ", a$2({ href: "https://vochlea.com/", target: "_blank" }, "Dubler"), " to hum notes into a microphone while wearing headphones!)"), label({ style: "display: flex; flex-direction: row; align-items: center; margin-top: 0.5em; height: 2em; justify-content: center;" }, "Enable MIDI performance:", this._enableMidi), p$2("The range of pitches available to play via your computer keyboard is affected by the octave scrollbar of the currently selected channel."), p$2("If you set the channel offset below to 'before' or 'after', notes below the middle octave in the view will be 'bass' notes, and placed in the channel before or after the viewed one. Using this, you can play bass and lead at the same time!"), label({ style: "display: flex; flex-direction: row; align-items: center; margin-top: 0.5em; margin-bottom: 0.5em; height: 2em; justify-content: center;" }, "Bass Offset:", div$a({ class: "selectContainer", style: "width: 50%; margin-left: 1em;" }, this._bassOffset)), p$2("Once you enable the setting, the keyboard layout above will darken to denote the new bass notes. The notes will be recorded with independent timing and this works with MIDI devices, too. Be aware that the octave offset of both used channels will impact how high/low the bass/lead are relative to one another."), p$2("Recorded notes often overlap such that one note ends after the next note already started. In JukeBox, these notes get split into multiple notes which may sound different when re-played than they did when you were recording. To fix the sound, you can either manually clean up the notes in the pattern editor, or you could try enabling the \"transition type\" effect on the instrument and setting it to \"continue\"."), div$a({ style: `width: 100%; height: 80px; background: linear-gradient(rgba(0,0,0,0), ${ColorConfig.editorBackground}); position: sticky; bottom: 0; pointer-events: none;` })), div$a({ style: "display: flex; flex-direction: row-reverse; justify-content: space-between;" }, this._okayButton), this._cancelButton);
@@ -48999,7 +49051,7 @@ You should be redirected to the song at:<br /><br />
         }
     }
 
-    const { button: button$9, div: div$9, h2: h2$8, input: input$5, p: p$1, a: a$1 } = HTML;
+    const { button: button$9, div: div$9, h2: h2$8, input: input$6, p: p$1, a: a$1 } = HTML;
     let doReload = false;
     class CustomThemePrompt {
         constructor(_doc, _pattern, _pattern2, _pattern3) {
@@ -49007,9 +49059,9 @@ You should be redirected to the song at:<br /><br />
             this._pattern = _pattern;
             this._pattern2 = _pattern2;
             this._pattern3 = _pattern3;
-            this._fileInput = input$5({ type: "file", accept: "image/*", text: "choose editor background image" });
-            this._fileInput2 = input$5({ type: "file", accept: "image/*", text: "choose website background image" });
-            this._colorInput = input$5({ type: "text", value: localStorage.getItem("customColors") || `:root {
+            this._fileInput = input$6({ type: "file", accept: "image/*", text: "choose editor background image" });
+            this._fileInput2 = input$6({ type: "file", accept: "image/*", text: "choose website background image" });
+            this._colorInput = input$6({ type: "text", value: localStorage.getItem("customColors") || `:root {
 	--page-margin: black;
 	--editor-background: black;
 	--hover-preview: white;
@@ -49345,7 +49397,7 @@ You should be redirected to the song at:<br /><br />
                     break;
                 case "sampleMap":
                     {
-                        message = div$7(h2$6("Per-Note Samples"), p("Assign a different loaded custom sample to each pitch. Each key on the keyboard can trigger its own sample — perfect for slicing a break across keys."), p("Load samples first via Add Samples, then assign them here. Pitches left on \"default\" use the instrument's base chip wave."));
+                        message = div$7(h2$6("Per-Note Samples"), p("Assign a different loaded custom sample to each pitch. Each key on the keyboard can trigger its own sample — perfect for slicing a break across keys."), p("Load samples first via Add Samples, then assign them here. Pitches left on \"default\" use the instrument's base chip wave."), p("Auto-slice: pick a loaded sample and a slice count — BreakBox detects transients (onsets) in the break and assigns each slice to a key starting at C1. Each key plays only its slice region."));
                     }
                     break;
                 case "noteGenerative":
@@ -50216,7 +50268,7 @@ You should be redirected to the song at:<br /><br />
         }
     }
 
-    const { div: div$6, input: input$4, button: button$6, h2: h2$5, select: select$4, option: option$4, canvas: canvas$1 } = HTML;
+    const { div: div$6, input: input$5, button: button$6, h2: h2$5, select: select$4, option: option$4, canvas: canvas$1 } = HTML;
     const defaultShapeFunction = (cnv, ctx, x, y, w, h) => {
         ctx.fillRect(x, y, w, h);
     };
@@ -50461,15 +50513,15 @@ You should be redirected to the song at:<br /><br />
             this._overlayCanvas = canvas$1({ width: this._waveformCanvasWidth, height: this._waveformCanvasHeight, style: "cursor: default; position: absolute; top: 0; left: 0; width: 100%;" });
             this._overlayContext = null;
             this._waveformContainer = div$6({ style: `position: relative; margin-bottom: 0.5em; margin-left: auto; margin-right: auto; width: 100%; outline: 1px solid ${ColorConfig.uiWidgetBackground};` }, this._waveformCanvas, this._overlayCanvas);
-            this._viewportOffsetSlider = input$4({ style: "width: 100%; flex-grow: 1; margin: 0;", type: "range", min: "0", max: "1", value: "0", step: "0.00001" });
+            this._viewportOffsetSlider = input$5({ style: "width: 100%; flex-grow: 1; margin: 0;", type: "range", min: "0", max: "1", value: "0", step: "0.00001" });
             this._zoomInButton = button$6({ type: "button", title: "Zoom In", style: "height: var(--button-size); margin-left: 0.5em;" }, SVG.svg({ width: "20", height: "20", viewBox: "-10 -10 20 20", "pointer-events": "none", style: "width: 100%; height: 100%;" }, SVG.circle({ cx: -1, cy: -1, r: 6, "stroke-width": 2, stroke: ColorConfig.primaryText, fill: "none" }), SVG.path({ stroke: ColorConfig.primaryText, "stroke-width": 2, d: "M 3 3 L 7 7 M -1 -4 L -1 2 M -4 -1 L 2 -1", fill: "none" })));
             this._zoomOutButton = button$6({ type: "button", title: "Zoom Out", style: "height: var(--button-size); margin-left: 0.5em;" }, SVG.svg({ width: "20", height: "20", viewBox: "-10 -10 20 20", "pointer-events": "none", style: "width: 100%; height: 100%;" }, SVG.circle({ cx: -1, cy: -1, r: 6, "stroke-width": 2, stroke: ColorConfig.primaryText, fill: "none" }), SVG.path({ stroke: ColorConfig.primaryText, "stroke-width": 2, d: "M 3 3 L 7 7 M -4 -1 L 2 -1", fill: "none" })));
             this._zoom100Button = button$6({ type: "button", title: "Zoom 100%", style: "height: var(--button-size); margin-left: 0.5em;" }, "100%");
             this._loopModeSelect = select$4({ style: "width: 100%; flex-grow: 1; margin-left: 0.5em;" }, option$4({ value: 0 }, "Loop"), option$4({ value: 1 }, "Ping-Pong"), option$4({ value: 2 }, "Play Once"), option$4({ value: 3 }, "Play Loop Once"));
-            this._startOffsetStepper = input$4({ style: "flex-grow: 1; margin-left: 1em; width: 100%;", type: "number", value: this._chipWaveStartOffset, min: "0", step: "1" });
-            this._loopStartStepper = input$4({ style: "flex-grow: 1; margin-left: 1em; width: 100%;", type: "number", value: this._chipWaveLoopStart, min: "0", step: "1" });
-            this._loopEndStepper = input$4({ style: "flex-grow: 1; margin-left: 1em; width: 100%;", type: "number", value: this._chipWaveLoopEnd, min: "0", step: "1" });
-            this._playBackwardsBox = input$4({ type: "checkbox", style: "width: 1em; padding: 0; margin-left: auto; margin-right: auto;" });
+            this._startOffsetStepper = input$5({ style: "flex-grow: 1; margin-left: 1em; width: 100%;", type: "number", value: this._chipWaveStartOffset, min: "0", step: "1" });
+            this._loopStartStepper = input$5({ style: "flex-grow: 1; margin-left: 1em; width: 100%;", type: "number", value: this._chipWaveLoopStart, min: "0", step: "1" });
+            this._loopEndStepper = input$5({ style: "flex-grow: 1; margin-left: 1em; width: 100%;", type: "number", value: this._chipWaveLoopEnd, min: "0", step: "1" });
+            this._playBackwardsBox = input$5({ type: "checkbox", style: "width: 1em; padding: 0; margin-left: auto; margin-right: auto;" });
             this._playSongButton = button$6({ style: "width: 55%;", type: "button" });
             this._cancelButton = button$6({ class: "cancelButton" });
             this._okayButton = button$6({ class: "okayButton", style: "width: 25%;" }, "Okay");
@@ -50992,7 +51044,7 @@ You should be redirected to the song at:<br /><br />
         }
     }
 
-    const { div: div$5, h2: h2$4, span: span$4, input: input$3, button: button$5 } = HTML;
+    const { div: div$5, h2: h2$4, span: span$4, input: input$4, button: button$5 } = HTML;
     class SampleLoadingStatusPrompt {
         constructor(_doc) {
             this._intervalDuration = 2000;
@@ -51043,7 +51095,7 @@ You should be redirected to the song at:<br /><br />
                     const sampleName = chipWave.name;
                     const url = sampleLoadingState.urlTable[chipWaveIndex];
                     const loadingStatus = getSampleLoadingStatusName(sampleLoadingState.statusTable[chipWaveIndex]);
-                    const urlDisplay = input$3({ style: `margin-left: 0.5em; color: ${ColorConfig.primaryText}; background-color: ${ColorConfig.editorBackground}; width: 100%; border: 1px solid ${ColorConfig.uiWidgetBackground}; -webkit-user-select: none; -webkit-touch-callout: none; -moz-user-select: none; -ms-user-select: none; user-select: none;`, value: url, title: url, disabled: true });
+                    const urlDisplay = input$4({ style: `margin-left: 0.5em; color: ${ColorConfig.primaryText}; background-color: ${ColorConfig.editorBackground}; width: 100%; border: 1px solid ${ColorConfig.uiWidgetBackground}; -webkit-user-select: none; -webkit-touch-callout: none; -moz-user-select: none; -ms-user-select: none; user-select: none;`, value: url, title: url, disabled: true });
                     const loadingStatusColor = loadingStatus === "loaded" ? ColorConfig.indicatorPrimary : ColorConfig.secondaryText;
                     const loadingStatusDisplay = span$4({ style: `margin-left: 0.5em; color: ${loadingStatusColor}` }, loadingStatus);
                     const chipWaveElement = div$5({ style: `padding: 0.6em; margin: 0.4em; border: 1px solid ${ColorConfig.uiWidgetBackground}; border-radius: 4px;` }, div$5({
@@ -51064,7 +51116,7 @@ You should be redirected to the song at:<br /><br />
         }
     }
 
-    const { div: div$4, input: input$2, button: button$4, a, code, textarea, details, summary, span: span$3, ul, li, select: select$3, option: option$3, h2: h2$3 } = HTML;
+    const { div: div$4, input: input$3, button: button$4, a, code, textarea, details, summary, span: span$3, ul, li, select: select$3, option: option$3, h2: h2$3 } = HTML;
     class AddSamplesPrompt {
         constructor(_doc) {
             this._maxSamples = 64;
@@ -51549,19 +51601,19 @@ You should be redirected to the song at:<br /><br />
                     const canMoveDown = this._entries.length >= 2 && entryIndex < this._entries.length - 1;
                     const entry = this._entries[entryIndex];
                     const optionsVisible = Boolean(this._entryOptionsDisplayStates[entryIndex]);
-                    const urlInput = input$2({ style: "flex-grow: 1; margin-left: 1em; width: 100%;", value: entry.url });
-                    const sampleRateStepper = input$2({ style: "flex-grow: 1; margin-left: 1em; width: 100%;", type: "number", value: "" + entry.sampleRate, min: "8000", max: "96000", step: "1" });
-                    const rootKeyStepper = input$2({ style: "flex-grow: 1; margin-left: 1em; width: 100%;", type: "number", value: "" + entry.rootKey, min: "0", max: Config.maxPitch + Config.pitchesPerOctave, step: "1" });
+                    const urlInput = input$3({ style: "flex-grow: 1; margin-left: 1em; width: 100%;", value: entry.url });
+                    const sampleRateStepper = input$3({ style: "flex-grow: 1; margin-left: 1em; width: 100%;", type: "number", value: "" + entry.sampleRate, min: "8000", max: "96000", step: "1" });
+                    const rootKeyStepper = input$3({ style: "flex-grow: 1; margin-left: 1em; width: 100%;", type: "number", value: "" + entry.rootKey, min: "0", max: Config.maxPitch + Config.pitchesPerOctave, step: "1" });
                     const rootKeyDisplay = span$3({ class: "add-sample-prompt-root-key-display", style: "margin-left: 0.4em; width: 3em; text-align: left; text-overflow: ellipsis; overflow: hidden; flex-shrink: 0;" }, `(${this._noteNameFromPitchNumber(entry.rootKey)})`);
-                    const percussionBox = input$2({ style: "width: 1em; margin-left: 1em;", type: "checkbox" });
-                    const chipWaveLoopStartStepper = input$2({ style: "flex-grow: 1; margin-left: 1em; width: 100%;", type: "number", value: "" + (entry.chipWaveLoopStart != null ? entry.chipWaveLoopStart : ""), min: "0", step: "1" });
-                    const chipWaveLoopEndStepper = input$2({ style: "flex-grow: 1; margin-left: 1em; width: 100%;", type: "number", value: "" + (entry.chipWaveLoopEnd != null ? entry.chipWaveLoopEnd : ""), min: "0", step: "1" });
-                    const chipWaveStartOffsetStepper = input$2({ style: "flex-grow: 1; margin-left: 1em; width: 100%;", type: "number", value: "" + (entry.chipWaveStartOffset != null ? entry.chipWaveStartOffset : ""), min: "0", step: "1" });
+                    const percussionBox = input$3({ style: "width: 1em; margin-left: 1em;", type: "checkbox" });
+                    const chipWaveLoopStartStepper = input$3({ style: "flex-grow: 1; margin-left: 1em; width: 100%;", type: "number", value: "" + (entry.chipWaveLoopStart != null ? entry.chipWaveLoopStart : ""), min: "0", step: "1" });
+                    const chipWaveLoopEndStepper = input$3({ style: "flex-grow: 1; margin-left: 1em; width: 100%;", type: "number", value: "" + (entry.chipWaveLoopEnd != null ? entry.chipWaveLoopEnd : ""), min: "0", step: "1" });
+                    const chipWaveStartOffsetStepper = input$3({ style: "flex-grow: 1; margin-left: 1em; width: 100%;", type: "number", value: "" + (entry.chipWaveStartOffset != null ? entry.chipWaveStartOffset : ""), min: "0", step: "1" });
                     const chipWaveLoopModeSelect = select$3({ style: "width: 100%; flex-grow: 1; margin-left: 0.5em;" }, option$3({ value: -1 }, ""), option$3({ value: 0 }, "Loop"), option$3({ value: 1 }, "Ping-Pong"), option$3({ value: 2 }, "Play Once"), option$3({ value: 3 }, "Play Loop Once"));
                     if (entry.chipWaveLoopMode != null) {
                         chipWaveLoopModeSelect.value = "" + entry.chipWaveLoopMode;
                     }
-                    const chipWavePlayBackwardsBox = input$2({ type: "checkbox", style: "width: 1em; padding: 0; margin-left: auto; margin-right: auto;" });
+                    const chipWavePlayBackwardsBox = input$3({ type: "checkbox", style: "width: 1em; padding: 0; margin-left: auto; margin-right: auto;" });
                     chipWavePlayBackwardsBox.checked = entry.chipWavePlayBackwards;
                     const sampleName = this._getSampleName(entry);
                     percussionBox.checked = entry.percussion;
@@ -51657,7 +51709,90 @@ You should be redirected to the song at:<br /><br />
         }
     }
 
-    const { button: button$3, div: div$3, h2: h2$2, select: select$2, option: option$2, span: span$2 } = HTML;
+    function detectTransients(samples, sliceCount, minSliceSamples = 512) {
+        if (samples.length <= 0)
+            return [0];
+        if (sliceCount <= 1)
+            return [0, samples.length];
+        const windowSize = Math.max(64, Math.min(4096, Math.floor(samples.length / 64)));
+        const hop = Math.max(32, Math.floor(windowSize / 2));
+        const windowCount = Math.max(2, Math.floor((samples.length - windowSize) / hop) + 1);
+        const energies = [];
+        for (let w = 0; w < windowCount; w++) {
+            const offset = w * hop;
+            let energy = 0;
+            for (let i = 0; i < windowSize; i++) {
+                const s = samples[offset + i];
+                energy += s * s;
+            }
+            energies.push(energy / windowSize);
+        }
+        let sum = 0;
+        let peak = 0;
+        for (const e of energies) {
+            sum += e;
+            if (e > peak)
+                peak = e;
+        }
+        const mean = sum / energies.length;
+        if (peak <= 0 || mean <= 0) {
+            const boundaries = [0];
+            for (let i = 1; i < sliceCount; i++) {
+                boundaries.push(Math.floor(samples.length * i / sliceCount));
+            }
+            boundaries.push(samples.length);
+            return boundaries;
+        }
+        const threshold = mean + (peak - mean) * 0.25;
+        const candidates = [];
+        const radius = Math.max(1, Math.floor(windowCount / (sliceCount * 3)));
+        for (let w = 1; w < windowCount - 1; w++) {
+            if (energies[w] >= threshold && energies[w] >= energies[w - 1] && energies[w] >= energies[w + 1]) {
+                let isDominant = true;
+                for (let r = 1; r <= radius; r++) {
+                    if (energies[w + r] > energies[w]) {
+                        isDominant = false;
+                        break;
+                    }
+                }
+                if (isDominant) {
+                    candidates.push(w * hop + Math.floor(windowSize / 2));
+                }
+            }
+        }
+        const boundaries = [0];
+        if (candidates.length > 0) {
+            const targetCount = Math.min(sliceCount - 1, candidates.length);
+            for (let i = 0; i < targetCount; i++) {
+                const idx = Math.floor((i + 1) * candidates.length / (targetCount + 1)) - 1;
+                const boundary = candidates[Math.max(0, Math.min(candidates.length - 1, idx))];
+                if (boundary > boundaries[boundaries.length - 1] && boundary < samples.length - 1) {
+                    boundaries.push(boundary);
+                }
+            }
+        }
+        while (boundaries.length < sliceCount) {
+            const last = boundaries[boundaries.length - 1];
+            const remaining = samples.length - last;
+            const next = last + Math.floor(remaining / (sliceCount - boundaries.length + 1));
+            if (next <= last || next >= samples.length)
+                break;
+            boundaries.push(next);
+        }
+        boundaries.push(samples.length);
+        boundaries.sort((a, b) => a - b);
+        const unique = [];
+        for (const b of boundaries) {
+            if (unique.length === 0 || b > unique[unique.length - 1] + minSliceSamples) {
+                unique.push(b);
+            }
+        }
+        if (unique[unique.length - 1] !== samples.length)
+            unique.push(samples.length);
+        return unique;
+    }
+
+    const { button: button$3, div: div$3, h2: h2$2, select: select$2, option: option$2, span: span$2, input: input$2 } = HTML;
     const PITCH_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
     const DEFAULT_PITCH_MIN = 24;
     const DEFAULT_PITCH_MAX = Config.maxPitch;
@@ -51667,9 +51802,39 @@ You should be redirected to the song at:<br /><br />
             this._cancelButton = button$3({ class: "cancelButton" });
             this._okayButton = button$3({ class: "okayButton", style: "width:45%;" }, "Okay");
             this._mapContainer = div$3({ style: "max-height: 400px; overflow-y: scroll; margin: 0.5em 0;" });
+            this._sampleSelect = select$2({ style: "width: 14em;" });
+            this._sliceCountInput = input$2({ type: "number", min: "2", max: "16", value: "8", step: "1", style: "width: 4em;" });
+            this._autoSliceButton = button$3({ class: "tip", style: "width: 100%;" }, "Auto-slice selected sample");
             this._selections = new Map();
             this._selects = new Map();
-            this.container = div$3({ class: "prompt noSelection", style: "width: 320px;" }, h2$2("Sample Map"), div$3({ style: `color: ${ColorConfig.secondaryText}; font-size: smaller; margin-bottom: 0.5em;` }, "Assign a loaded custom sample to each pitch. Pitches left on \"default\" use the instrument's base chip wave."), this._mapContainer, div$3({ style: "display: flex; flex-direction: row-reverse; justify-content: space-between;" }, this._okayButton), this._cancelButton);
+            this.container = div$3({ class: "prompt noSelection", style: "width: 320px;" }, h2$2("Sample Map"), div$3({ style: `color: ${ColorConfig.secondaryText}; font-size: smaller; margin-bottom: 0.5em;` }, "Assign a loaded custom sample to each pitch. Pitches left on \"default\" use the instrument's base chip wave."), div$3({ style: "display: flex; flex-direction: row; align-items: center; gap: 0.5em; margin-bottom: 0.5em;" }, span$2({ style: "font-size: smaller;" }, "Auto-slice:"), this._sampleSelect, this._sliceCountInput, this._autoSliceButton), this._mapContainer, div$3({ style: "display: flex; flex-direction: row-reverse; justify-content: space-between;" }, this._okayButton), this._cancelButton);
+            this._whenAutoSliceClicked = () => {
+                const sampleIndex = +this._sampleSelect.value;
+                if (this._sampleSelect.options.length === 0 || sampleIndex < 0)
+                    return;
+                const sliceCount = Math.max(2, Math.min(16, Math.round(+this._sliceCountInput.value)));
+                const chipWaveIndex = Config.firstIndexForSamplesInChipWaveList + sampleIndex;
+                const wave = Config.chipWaves[chipWaveIndex];
+                if (wave == null || wave.samples == null || wave.samples.length <= 0)
+                    return;
+                const boundaries = detectTransients(wave.samples, sliceCount);
+                const newSelections = new Map(this._selections);
+                for (let i = 0; i < boundaries.length - 1; i++) {
+                    const pitch = DEFAULT_PITCH_MIN + i;
+                    newSelections.set(pitch, sampleIndex);
+                    this._selections.set(pitch, sampleIndex);
+                    const selectEl = this._selects.get(pitch);
+                    if (selectEl != null)
+                        setSelectedValue$1(selectEl, sampleIndex);
+                }
+                const instrument = this._doc.song.channels[this._doc.channel].instruments[this._doc.getCurrentInstrument()];
+                instrument.sampleMapSlices.clear();
+                for (let i = 0; i < boundaries.length - 1; i++) {
+                    const pitch = DEFAULT_PITCH_MIN + i;
+                    instrument.sampleMapSlices.set(pitch, { start: boundaries[i], end: boundaries[i + 1] });
+                }
+                this._doc.notifier.changed();
+            };
             this._close = () => {
                 this._doc.prompt = null;
                 this._doc.undo();
@@ -51677,6 +51842,7 @@ You should be redirected to the song at:<br /><br />
             this.cleanUp = () => {
                 this._okayButton.removeEventListener("click", this._saveChanges);
                 this._cancelButton.removeEventListener("click", this._close);
+                this._autoSliceButton.removeEventListener("click", this._whenAutoSliceClicked);
             };
             this._saveChanges = () => {
                 const newMap = new Map(this._selections);
@@ -51693,6 +51859,10 @@ You should be redirected to the song at:<br /><br />
                     sampleNames.push(this._sampleNameFromUrl(url));
                 }
             }
+            for (let i = 0; i < sampleNames.length; i++) {
+                this._sampleSelect.appendChild(option$2({ value: i + "" }, sampleNames[i] + " #" + (i + 1)));
+            }
+            this._autoSliceButton.addEventListener("click", this._whenAutoSliceClicked);
             for (let pitch = DEFAULT_PITCH_MIN; pitch <= DEFAULT_PITCH_MAX; pitch++) {
                 const octave = Math.floor(pitch / 12) - 1;
                 const pitchName = PITCH_NAMES[pitch % 12] + octave;

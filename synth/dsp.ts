@@ -996,6 +996,11 @@ class Tone {
     // Set by computeTone; the chip synth functions prefer this over the
     // instrumentState.wave (which is shared across tones of one instrument).
     public wave: Float32Array | null = null;
+    // BreakBox Phase 2: per-pitch slice region overrides (transient auto-slicing).
+    // Set by computeTone; loopableChipSynth prefers these over instrumentState's.
+    public chipWaveLoopStart = -1;
+    public chipWaveLoopEnd = -1;
+    public isUsingAdvancedLoopControls = false;
 }
 
 class InstrumentState {
@@ -4635,10 +4640,12 @@ export class Synth {
             tone.reset();
             instrumentState.envelopeComputer.reset();
             // advloop addition
-            if ((instrument.type == InstrumentType.chip || instrument.type == InstrumentType.multiSample) && instrument.isUsingAdvancedLoopControls) {
+            if ((instrument.type == InstrumentType.chip || instrument.type == InstrumentType.multiSample) && (instrument.isUsingAdvancedLoopControls || instrument.sampleMapSlices.size > 0)) {
                 const chipWaveIndex: number = instrument.getSampleChipWaveIndex(tone.pitches[0]);
                 const chipWaveLength = Config.rawRawChipWaves[chipWaveIndex].samples.length - 1;
-                const firstOffset = instrument.chipWaveStartOffset / chipWaveLength;
+                // BreakBox Phase 2: slices start at the slice region start.
+                const slice = instrument.sampleMapSlices.get(tone.pitches[0]);
+                const firstOffset = (slice != null) ? slice.start / chipWaveLength : instrument.chipWaveStartOffset / chipWaveLength;
                 // const lastOffset = (chipWaveLength - 0.01) / chipWaveLength;
                 // @TODO: This is silly and I should actually figure out how to
                 // properly keep lastOffset as 1.0 and not get it wrapped back
@@ -4661,6 +4668,16 @@ export class Synth {
         if (instrument.type == InstrumentType.multiSample) {
             const resolvedWaveIndex: number = instrument.getSampleChipWaveIndex(tone.pitches[0]);
             tone.wave = instrument.aliases ? Config.rawChipWaves[resolvedWaveIndex].samples : Config.chipWaves[resolvedWaveIndex].samples;
+            // BreakBox Phase 2: if this pitch has a slice region, constrain the
+            // playback loop to that region so the tone plays only the slice.
+            const slice = instrument.sampleMapSlices.get(tone.pitches[0]);
+            if (slice != null) {
+                const waveLength: number = tone.wave!.length - 1;
+                tone.chipWaveLoopStart = clamp(0, waveLength + 1, slice.start);
+                tone.chipWaveLoopEnd = clamp(0, waveLength + 1, slice.end);
+                if (tone.chipWaveLoopEnd <= tone.chipWaveLoopStart) tone.chipWaveLoopEnd = tone.chipWaveLoopStart + 1;
+                tone.isUsingAdvancedLoopControls = true;
+            }
         }
 
         for (let i: number = 0; i < Config.maxPitchOrOperatorCount; i++) {
@@ -5627,7 +5644,7 @@ export class Synth {
             return Synth.fmSynthFunctionCache[fingerprint];
         } else if (instrument.type == InstrumentType.chip || instrument.type == InstrumentType.multiSample) {
             // advloop addition
-            if (instrument.isUsingAdvancedLoopControls) {
+            if (instrument.isUsingAdvancedLoopControls || instrument.sampleMapSlices.size > 0) {
                 return Synth.loopableChipSynth;
             }
             // advloop addition
@@ -5729,8 +5746,10 @@ export class Synth {
             const volumeScale = instrumentState.volumeScale;
             const waveLength = (aliases && instrumentState.type == 8) ? wave.length : wave.length - 1;
 
-            let chipWaveLoopEnd = Math.max(0, Math.min(waveLength, instrumentState.chipWaveLoopEnd));
-            let chipWaveLoopStart = Math.max(0, Math.min(chipWaveLoopEnd - 1, instrumentState.chipWaveLoopStart));
+            let chipWaveLoopEnd = (tone.chipWaveLoopEnd >= 0) ? tone.chipWaveLoopEnd : instrumentState.chipWaveLoopEnd;
+            chipWaveLoopEnd = Math.max(0, Math.min(waveLength, chipWaveLoopEnd));
+            let chipWaveLoopStart = (tone.chipWaveLoopStart >= 0) ? tone.chipWaveLoopStart : instrumentState.chipWaveLoopStart;
+            chipWaveLoopStart = Math.max(0, Math.min(chipWaveLoopEnd - 1, chipWaveLoopStart));
             `
             // @TODO: This is where to set things up for the release loop mode.
             // const ticksSinceReleased = tone.ticksSinceReleased;

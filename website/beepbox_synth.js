@@ -6328,6 +6328,9 @@ var beepbox = (function (exports) {
             this.isFirstOrder = false;
             this.envelopeComputer = new EnvelopeComputer();
             this.wave = null;
+            this.chipWaveLoopStart = -1;
+            this.chipWaveLoopEnd = -1;
+            this.isUsingAdvancedLoopControls = false;
             this.reset();
         }
         reset() {
@@ -9470,10 +9473,11 @@ var beepbox = (function (exports) {
             if ((tone.atNoteStart && !transition.isSeamless && !tone.forceContinueAtStart) || tone.freshlyAllocated) {
                 tone.reset();
                 instrumentState.envelopeComputer.reset();
-                if ((instrument.type == 0 || instrument.type == 12) && instrument.isUsingAdvancedLoopControls) {
+                if ((instrument.type == 0 || instrument.type == 12) && (instrument.isUsingAdvancedLoopControls || instrument.sampleMapSlices.size > 0)) {
                     const chipWaveIndex = instrument.getSampleChipWaveIndex(tone.pitches[0]);
                     const chipWaveLength = Config.rawRawChipWaves[chipWaveIndex].samples.length - 1;
-                    const firstOffset = instrument.chipWaveStartOffset / chipWaveLength;
+                    const slice = instrument.sampleMapSlices.get(tone.pitches[0]);
+                    const firstOffset = (slice != null) ? slice.start / chipWaveLength : instrument.chipWaveStartOffset / chipWaveLength;
                     const lastOffset = 0.999999999999999;
                     for (let i = 0; i < Config.maxPitchOrOperatorCount; i++) {
                         tone.phases[i] = instrument.chipWavePlayBackwards ? Math.max(0, Math.min(lastOffset, firstOffset)) : Math.max(0, firstOffset);
@@ -9488,6 +9492,15 @@ var beepbox = (function (exports) {
             if (instrument.type == 12) {
                 const resolvedWaveIndex = instrument.getSampleChipWaveIndex(tone.pitches[0]);
                 tone.wave = instrument.aliases ? Config.rawChipWaves[resolvedWaveIndex].samples : Config.chipWaves[resolvedWaveIndex].samples;
+                const slice = instrument.sampleMapSlices.get(tone.pitches[0]);
+                if (slice != null) {
+                    const waveLength = tone.wave.length - 1;
+                    tone.chipWaveLoopStart = clamp(0, waveLength + 1, slice.start);
+                    tone.chipWaveLoopEnd = clamp(0, waveLength + 1, slice.end);
+                    if (tone.chipWaveLoopEnd <= tone.chipWaveLoopStart)
+                        tone.chipWaveLoopEnd = tone.chipWaveLoopStart + 1;
+                    tone.isUsingAdvancedLoopControls = true;
+                }
             }
             for (let i = 0; i < Config.maxPitchOrOperatorCount; i++) {
                 tone.phaseDeltas[i] = 0.0;
@@ -10276,7 +10289,7 @@ var beepbox = (function (exports) {
                 return Synth.fmSynthFunctionCache[fingerprint];
             }
             else if (instrument.type == 0 || instrument.type == 12) {
-                if (instrument.isUsingAdvancedLoopControls) {
+                if (instrument.isUsingAdvancedLoopControls || instrument.sampleMapSlices.size > 0) {
                     return Synth.loopableChipSynth;
                 }
                 return Synth.chipSynth;
@@ -10378,8 +10391,10 @@ var beepbox = (function (exports) {
             const volumeScale = instrumentState.volumeScale;
             const waveLength = (aliases && instrumentState.type == 8) ? wave.length : wave.length - 1;
 
-            let chipWaveLoopEnd = Math.max(0, Math.min(waveLength, instrumentState.chipWaveLoopEnd));
-            let chipWaveLoopStart = Math.max(0, Math.min(chipWaveLoopEnd - 1, instrumentState.chipWaveLoopStart));
+            let chipWaveLoopEnd = (tone.chipWaveLoopEnd >= 0) ? tone.chipWaveLoopEnd : instrumentState.chipWaveLoopEnd;
+            chipWaveLoopEnd = Math.max(0, Math.min(waveLength, chipWaveLoopEnd));
+            let chipWaveLoopStart = (tone.chipWaveLoopStart >= 0) ? tone.chipWaveLoopStart : instrumentState.chipWaveLoopStart;
+            chipWaveLoopStart = Math.max(0, Math.min(chipWaveLoopEnd - 1, chipWaveLoopStart));
             `;
                 chipSource += `
             let chipWaveLoopLength = chipWaveLoopEnd - chipWaveLoopStart;
@@ -13884,6 +13899,7 @@ var beepbox = (function (exports) {
             this.detune = 0;
             this.samplePitchLock = false;
             this.sampleMap = new Map();
+            this.sampleMapSlices = new Map();
             this.vibrato = 0;
             this.interval = 0;
             this.vibratoDepth = 0;
@@ -14168,6 +14184,7 @@ var beepbox = (function (exports) {
                 case 12:
                     this.chipWave = 2;
                     this.sampleMap.clear();
+                    this.sampleMapSlices.clear();
                     this.chord = Config.chords.dictionary["arpeggio"].index;
                     this.isUsingAdvancedLoopControls = false;
                     this.chipWaveLoopStart = 0;
@@ -14322,6 +14339,13 @@ var beepbox = (function (exports) {
                     sampleMapObject[pitch + ""] = sampleIndex;
                 }
                 instrumentObject["sampleMap"] = sampleMapObject;
+            }
+            if (this.sampleMapSlices.size > 0) {
+                const sliceObject = {};
+                for (const [pitch, slice] of this.sampleMapSlices) {
+                    sliceObject[pitch + ""] = { start: slice.start, end: slice.end };
+                }
+                instrumentObject["sampleMapSlices"] = sliceObject;
             }
             if (effectsIncludeVibrato(this.effects)) {
                 if (this.vibrato == -1) {
@@ -14748,6 +14772,13 @@ var beepbox = (function (exports) {
                 for (const pitch of Object.keys(instrumentObject["sampleMap"])) {
                     const sampleIndex = +instrumentObject["sampleMap"][pitch];
                     this.sampleMap.set(parseIntWithDefault(pitch, 0), sampleIndex);
+                }
+            }
+            if (instrumentObject["sampleMapSlices"] != undefined) {
+                this.sampleMapSlices.clear();
+                for (const pitch of Object.keys(instrumentObject["sampleMapSlices"])) {
+                    const slice = instrumentObject["sampleMapSlices"][pitch];
+                    this.sampleMapSlices.set(parseIntWithDefault(pitch, 0), { start: (+slice.start) | 0, end: (+slice.end) | 0 });
                 }
             }
             this.vibrato = Config.vibratos.dictionary["none"].index;
@@ -15960,6 +15991,14 @@ var beepbox = (function (exports) {
                         buffer.push(75, base64IntToCharCode[instrument.sampleMap.size]);
                         for (const [pitch, sampleIndex] of instrument.sampleMap) {
                             buffer.push(base64IntToCharCode[pitch >> 6], base64IntToCharCode[pitch & 0x3f], base64IntToCharCode[sampleIndex & 0x3f]);
+                        }
+                    }
+                    if (instrument.sampleMapSlices.size > 0) {
+                        buffer.push(90, base64IntToCharCode[instrument.sampleMapSlices.size]);
+                        for (const [pitch, slice] of instrument.sampleMapSlices) {
+                            buffer.push(base64IntToCharCode[pitch >> 6], base64IntToCharCode[pitch & 0x3f]);
+                            buffer.push(base64IntToCharCode[slice.start >> 6], base64IntToCharCode[slice.start & 0x3f]);
+                            buffer.push(base64IntToCharCode[slice.end >> 6], base64IntToCharCode[slice.end & 0x3f]);
                         }
                     }
                     if (instrument.type != 4) {
@@ -17716,6 +17755,19 @@ var beepbox = (function (exports) {
                                 const pitch = (base64CharCodeToInt[compressed.charCodeAt(charIndex++)] << 6) | base64CharCodeToInt[compressed.charCodeAt(charIndex++)];
                                 const sampleIndex = base64CharCodeToInt[compressed.charCodeAt(charIndex++)] & 0x3f;
                                 instrument.sampleMap.set(pitch, sampleIndex);
+                            }
+                        }
+                        break;
+                    case 90:
+                        {
+                            const instrument = this.channels[instrumentChannelIterator].instruments[instrumentIndexIterator];
+                            const sliceCount = base64CharCodeToInt[compressed.charCodeAt(charIndex++)];
+                            instrument.sampleMapSlices.clear();
+                            for (let i = 0; i < sliceCount; i++) {
+                                const pitch = (base64CharCodeToInt[compressed.charCodeAt(charIndex++)] << 6) | base64CharCodeToInt[compressed.charCodeAt(charIndex++)];
+                                const start = (base64CharCodeToInt[compressed.charCodeAt(charIndex++)] << 6) | base64CharCodeToInt[compressed.charCodeAt(charIndex++)];
+                                const end = (base64CharCodeToInt[compressed.charCodeAt(charIndex++)] << 6) | base64CharCodeToInt[compressed.charCodeAt(charIndex++)];
+                                instrument.sampleMapSlices.set(pitch, { start: start, end: end });
                             }
                         }
                         break;

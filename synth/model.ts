@@ -1279,6 +1279,10 @@ export class Instrument {
     // Maps MIDI pitch number -> custom sample index (into EditorConfig.customSamples).
     // The i-th custom sample URL becomes chip wave firstIndexForSamplesInChipWaveList + i.
     public sampleMap: Map<number, number> = new Map<number, number>();
+    // BreakBox Phase 2: per-pitch slice regions within the assigned sample.
+    // Maps MIDI pitch number -> { start, end } sample offsets. When present, the
+    // tone plays only that region (transient auto-slicing).
+    public sampleMapSlices: Map<number, { start: number; end: number }> = new Map<number, { start: number; end: number }>();
 
     // Resolves the chip wave index to use for a given pitch. For multiSample
     // instruments, looks up the per-pitch assignment (custom-sample URL-list
@@ -1628,6 +1632,7 @@ export class Instrument {
             case InstrumentType.multiSample:
                 this.chipWave = 2;
                 this.sampleMap.clear();
+                this.sampleMapSlices.clear();
                 this.chord = Config.chords.dictionary["arpeggio"].index;
                 this.isUsingAdvancedLoopControls = false;
                 this.chipWaveLoopStart = 0;
@@ -1797,6 +1802,13 @@ export class Instrument {
                 sampleMapObject[pitch + ""] = sampleIndex;
             }
             instrumentObject["sampleMap"] = sampleMapObject;
+        }
+        if (this.sampleMapSlices.size > 0) {
+            const sliceObject: { [pitch: string]: { start: number; end: number } } = {};
+            for (const [pitch, slice] of this.sampleMapSlices) {
+                sliceObject[pitch + ""] = { start: slice.start, end: slice.end };
+            }
+            instrumentObject["sampleMapSlices"] = sliceObject;
         }
         if (effectsIncludeVibrato(this.effects)) {
             if (this.vibrato == -1) {
@@ -2238,6 +2250,13 @@ export class Instrument {
             for (const pitch of Object.keys(instrumentObject["sampleMap"])) {
                 const sampleIndex: number = +instrumentObject["sampleMap"][pitch];
                 this.sampleMap.set(parseIntWithDefault(pitch, 0), sampleIndex);
+            }
+        }
+        if (instrumentObject["sampleMapSlices"] != undefined) {
+            this.sampleMapSlices.clear();
+            for (const pitch of Object.keys(instrumentObject["sampleMapSlices"])) {
+                const slice: any = instrumentObject["sampleMapSlices"][pitch];
+                this.sampleMapSlices.set(parseIntWithDefault(pitch, 0), { start: (+slice.start) | 0, end: (+slice.end) | 0 });
             }
         }
 
@@ -3608,6 +3627,16 @@ export class Song {
                     buffer.push(SongTagCode.sampleMap, base64IntToCharCode[instrument.sampleMap.size]);
                     for (const [pitch, sampleIndex] of instrument.sampleMap) {
                         buffer.push(base64IntToCharCode[pitch >> 6], base64IntToCharCode[pitch & 0x3f], base64IntToCharCode[sampleIndex & 0x3f]);
+                    }
+                }
+                // BreakBox Phase 2: per-pitch slice regions.
+                // Each entry: pitch (2 chars) + start (2 chars) + end (2 chars).
+                if (instrument.sampleMapSlices.size > 0) {
+                    buffer.push(SongTagCode.sampleMapSlices, base64IntToCharCode[instrument.sampleMapSlices.size]);
+                    for (const [pitch, slice] of instrument.sampleMapSlices) {
+                        buffer.push(base64IntToCharCode[pitch >> 6], base64IntToCharCode[pitch & 0x3f]);
+                        buffer.push(base64IntToCharCode[slice.start >> 6], base64IntToCharCode[slice.start & 0x3f]);
+                        buffer.push(base64IntToCharCode[slice.end >> 6], base64IntToCharCode[slice.end & 0x3f]);
                     }
                 }
 
@@ -5454,6 +5483,19 @@ export class Song {
                     const pitch: number = (base64CharCodeToInt[compressed.charCodeAt(charIndex++)] << 6) | base64CharCodeToInt[compressed.charCodeAt(charIndex++)];
                     const sampleIndex: number = base64CharCodeToInt[compressed.charCodeAt(charIndex++)] & 0x3f;
                     instrument.sampleMap.set(pitch, sampleIndex);
+                }
+            } break;
+            case SongTagCode.sampleMapSlices: {
+                // BreakBox Phase 2: per-pitch slice regions.
+                // count (1 char), then per entry: pitch (2 chars) + start (2 chars) + end (2 chars).
+                const instrument: Instrument = this.channels[instrumentChannelIterator].instruments[instrumentIndexIterator];
+                const sliceCount: number = base64CharCodeToInt[compressed.charCodeAt(charIndex++)];
+                instrument.sampleMapSlices.clear();
+                for (let i: number = 0; i < sliceCount; i++) {
+                    const pitch: number = (base64CharCodeToInt[compressed.charCodeAt(charIndex++)] << 6) | base64CharCodeToInt[compressed.charCodeAt(charIndex++)];
+                    const start: number = (base64CharCodeToInt[compressed.charCodeAt(charIndex++)] << 6) | base64CharCodeToInt[compressed.charCodeAt(charIndex++)];
+                    const end: number = (base64CharCodeToInt[compressed.charCodeAt(charIndex++)] << 6) | base64CharCodeToInt[compressed.charCodeAt(charIndex++)];
+                    instrument.sampleMapSlices.set(pitch, { start: start, end: end });
                 }
             } break;
             case SongTagCode.volume: {
