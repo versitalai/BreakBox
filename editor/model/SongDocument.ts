@@ -15,6 +15,7 @@ import { ChangeNotifier } from "../core/ChangeNotifier";
 import { ChangeSong, setDefaultInstruments, discardInvalidPatternInstruments, ChangeHoldingModRecording } from "../core/changes";
 import { AudioEngineApi } from "../../synth/AudioEngineApi";
 import { WorkletSynthAdapter } from "../audio/WorkletSynthAdapter";
+import { di, I_AUDIO_ENGINE } from "../../synth/DI";
 
 interface HistoryState {
     canUndo: boolean;
@@ -98,8 +99,9 @@ export class SongDocument {
         this.synth.volume = this._calcVolume();
         this.synth.anticipatePoorPerformance = isMobile;
 
-        // New: AudioWorklet-backed engine for actual playback
-        this.audioEngine = new WorkletSynthAdapter();
+        // Audio engine: resolve via DI (defaults to WorkletSynthAdapter).
+        // If no engine is registered, fall back to the original hardcoded construction.
+        this.audioEngine = di.has(I_AUDIO_ENGINE) ? di.resolve<AudioEngineApi>(I_AUDIO_ENGINE) : new WorkletSynthAdapter();
         this.audioEngine.onTick = (tick: number) => {
             // Sync playhead from worklet to legacy synth for UI
             this.synth.playhead = tick;

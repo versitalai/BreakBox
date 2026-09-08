@@ -95,3 +95,17 @@ export class DIContainer {
  * For test isolation, use `di.reset()` between test runs.
  */
 export const di: DIContainer = new DIContainer();
+
+/**
+ * Well-known service tokens used across BreakBox.
+ *
+ * These are declared as exported `symbol` constants so any module can
+ * register or resolve a service by token without importing the implementation.
+ *
+ * To add a new service:
+ *   1. Declare its token here: `export const I_MY_SERVICE: ServiceToken = Symbol('I_MY_SERVICE');`
+ *   2. Register an implementation at startup (e.g., in the barrel or app entry)
+ *   3. Resolve it anywhere via `di.resolve(I_MY_SERVICE)`
+ */
+export const I_AUDIO_ENGINE: ServiceToken = Symbol('I_AUDIO_ENGINE');
+export const I_ENVIRONMENT: ServiceToken = Symbol('I_ENVIRONMENT');

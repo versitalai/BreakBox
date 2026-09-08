@@ -13,6 +13,16 @@ export class BreakBoxAudioEngine implements AudioEngineApi {
     private lookaheadMs: number = 30; // 25-50ms lookahead
     private schedulerTimer: number | null = null;
     private scheduledCommands: Array<{ tick: number; cmd: VoiceCommand }> = [];
+    /** Configurable path to the AudioWorklet processor script. Defaults to
+     *  the standard website location. Override via constructor or DI for
+     *  custom deployment paths. */
+    private workletModulePath: string = 'breakbox-processor.js';
+
+    constructor(workletModulePath?: string) {
+        if (workletModulePath != undefined) {
+            this.workletModulePath = workletModulePath;
+        }
+    }
 
     // AudioEngineApi implementation
     async init(): Promise<void> {
@@ -21,8 +31,8 @@ export class BreakBoxAudioEngine implements AudioEngineApi {
         this.audioContext = new AudioContext({ latencyHint: 'interactive' });
         this.sampleRate = this.audioContext.sampleRate;
 
-        // Load the AudioWorklet module
-        await this.audioContext.audioWorklet.addModule('/breakbox-processor.js');
+        // Load the AudioWorklet module (relative path — resolves from document base URI)
+        await this.audioContext.audioWorklet.addModule(this.workletModulePath);
 
         // Create the worklet node
         this.workletNode = new AudioWorkletNode(this.audioContext, 'breakbox-processor', {
