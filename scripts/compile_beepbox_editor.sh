@@ -1,24 +1,9 @@
 #!/bin/bash
 set -e
 
-# Compile editor/main.ts into build/editor/main.js and dependencies
-npx tsc -p tsconfig_editor.json
+# Legacy compatibility wrapper — delegates to the config-driven build orchestrator.
+# New code should use: node scripts/build.cjs editor
+# This script is kept for backward compatibility with existing CI/deploy setups.
 
-# Combine build/editor/main.js and dependencies into website/beepbox_editor.js
-npx rollup build/editor/main.js \
-	--file ./website/beepbox_editor.js \
-	--format iife \
-	--output.name beepbox \
-	--context exports \
-	--sourcemap \
-	--plugin @rollup/plugin-node-resolve
-
-# Minify website/beepbox_editor.js into website/beepbox_editor.min.js
-npx terser \
-	./website/beepbox_editor.js \
-	--source-map "content='./website/beepbox_editor.js.map',url=beepbox_editor.min.js.map" \
-	-o ./website/beepbox_editor.min.js \
-	--compress \
-	--define OFFLINE=false \
-	--mangle \
-	--mangle-props regex="/^_.+/;"
+echo "[DEPRECATED] compile_beepbox_editor.sh — use 'npm run build-editor' instead"
+exec node scripts/build.cjs editor

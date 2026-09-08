@@ -1,0 +1,154 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "BreakBox build manifest — config-driven replacement for hardcoded shell scripts. Each target defines its own tsconfig, entry point, rollup options, and terser options. New build targets only need to add an entry here — no shell script copy-paste required.",
+  "targets": {
+    "synth": {
+      "name": "beepbox_synth",
+      "tsconfig": "tsconfig_synth_only.json",
+      "entry": "synth/synth.ts",
+      "outputDir": "build/synth",
+      "rollup": {
+        "outputFile": "website/beepbox_synth.js",
+        "format": "iife",
+        "outputName": "beepbox",
+        "context": "exports",
+        "sourcemap": true,
+        "plugins": ["@rollup/plugin-node-resolve"]
+      },
+      "terser": {
+        "input": "website/beepbox_synth.js",
+        "outputFile": "website/beepbox_synth.min.js",
+        "sourceMap": {
+          "content": "./website/beepbox_synth.js.map",
+          "url": "beepbox_synth.min.js.map"
+        },
+        "compress": true,
+        "mangle": true,
+        "manglePropsRegex": "/^_.+/",
+        "define": { "OFFLINE": "false" }
+      }
+    },
+    "processor": {
+      "name": "breakbox-processor",
+      "tsconfig": "tsconfig_processor.json",
+      "entry": "synth/BreakBoxProcessor.ts",
+      "outputDir": "build/synth/synth",
+      "copyToWebsite": {
+        "from": "build/synth/synth/BreakBoxProcessor.js",
+        "to": "website/breakbox-processor.js"
+      },
+      "copyMapToWebsite": {
+        "from": "build/synth/synth/BreakBoxProcessor.js.map",
+        "to": "website/breakbox-processor.js.map"
+      },
+      "terser": {
+        "input": "website/breakbox-processor.js",
+        "outputFile": "website/breakbox-processor.min.js",
+        "sourceMap": {
+          "content": "./website/breakbox-processor.js.map",
+          "url": "breakbox-processor.min.js.map"
+        },
+        "compress": true,
+        "mangle": true,
+        "module": true
+      }
+    },
+    "editor": {
+      "name": "beepbox_editor",
+      "tsconfig": "tsconfig_editor.json",
+      "entry": "editor/main.ts",
+      "outputDir": "build/editor",
+      "rollup": {
+        "outputFile": "website/beepbox_editor.js",
+        "format": "iife",
+        "outputName": "beepbox",
+        "context": "exports",
+        "sourcemap": true,
+        "plugins": ["@rollup/plugin-node-resolve"]
+      },
+      "terser": {
+        "input": "website/beepbox_editor.js",
+        "outputFile": "website/beepbox_editor.min.js",
+        "sourceMap": {
+          "content": "./website/beepbox_editor.js.map",
+          "url": "beepbox_editor.min.js.map"
+        },
+        "compress": true,
+        "mangle": true,
+        "manglePropsRegex": "/^_.+/",
+        "define": { "OFFLINE": "false" }
+      }
+    },
+    "player": {
+      "name": "beepbox_player",
+      "tsconfig": "tsconfig_player.json",
+      "entry": "player/main.ts",
+      "outputDir": "build/player",
+      "rollup": {
+        "outputFile": "website/player/beepbox_player.js",
+        "format": "iife",
+        "outputName": "beepbox",
+        "context": "exports",
+        "sourcemap": true,
+        "plugins": ["@rollup/plugin-node-resolve"]
+      },
+      "terser": {
+        "input": "website/player/beepbox_player.js",
+        "outputFile": "website/player/beepbox_player.min.js",
+        "sourceMap": {
+          "content": "./website/player/beepbox_player.js.map",
+          "url": "beepbox_player.min.js.map"
+        },
+        "compress": true,
+        "mangle": true,
+        "manglePropsRegex": "/^_.+/",
+        "define": { "OFFLINE": "false" }
+      }
+    },
+    "website-editor-config": {
+      "name": "EditorConfig",
+      "tsconfig": "tsconfig_editor.json",
+      "entry": "editor/core/EditorConfig.ts",
+      "outputDir": "build/editor",
+      "rollup": {
+        "outputFile": "website/manual/EditorConfig.js",
+        "format": "iife",
+        "outputName": "EditorConfig",
+        "context": "exports",
+        "sourcemap": true,
+        "plugins": ["@rollup/plugin-node-resolve"]
+      },
+      "terser": {
+        "input": "website/manual/EditorConfig.js",
+        "outputFile": "website/manual/EditorConfig.min.js",
+        "sourceMap": {
+          "content": "./website/manual/EditorConfig.js.map",
+          "url": "EditorConfig.min.js.map"
+        },
+        "compress": true,
+        "mangle": true,
+        "manglePropsRegex": "/^_.+/"
+      }
+    }
+  },
+  "deployment": {
+    "githubPages": {
+      "description": "GitHub Pages serves from repo root, not website/. These files must be copied to root after build.",
+      "files": [
+        "website/beepbox_editor.js",
+        "website/beepbox_editor.min.js",
+        "website/beepbox_synth.js",
+        "website/beepbox_synth.min.js",
+        "website/breakbox-processor.js",
+        "website/breakbox-processor.min.js",
+        "website/breakbox-processor.js.map",
+        "website/breakbox-processor.min.js.map",
+        "website/index.html"
+      ]
+    },
+    "electron": {
+      "description": "Offline/Electron build output",
+      "destination": "to_deploy/"
+    }
+  }
+}
