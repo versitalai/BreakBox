@@ -4,6 +4,13 @@
 // Public surface preserved EXACTLY as the original monolithic synth.ts: model classes, note/pin types, util functions, Synth.
 // Internal helpers (Grain, Tone, InstrumentState, BitFieldReader, base64 tables, ...) stay module-private.
 
+// Side-effect imports: register all instrument type specs, synth function factories,
+// and tag handlers before any model class or Synth method is used.
+// These registrations are no-ops at the type level — they populate registries via
+// module-level side effects, so importing the barrel ensures everything is wired up.
+import './registries/InstrumentTypes';
+import './registries/registerSynthFunctions';
+
 export { clamp, parseFloatWithDefault, parseIntWithDefault } from "./util";
 export { NotePin, makeNotePin, Note, Pattern, Operator, CustomAlgorithm, CustomFeedBack, SpectrumWave, HarmonicsWave, FilterControlPoint, FilterSettings, EnvelopeSettings, Instrument, Channel, Song } from "./model";
 export { Synth } from "./dsp";

@@ -10,11 +10,6 @@
 
 import { InstrumentType } from '../SynthConfig';
 import { Instrument } from '../model';
-import { Config } from '../SynthConfig';
-import { SustainType } from '../SynthConfig';
-import { SpectrumWave } from '../model';
-import { HarmonicsWave } from '../model';
-import { EffectType } from '../SynthConfig';
 
 /**
  * A function that applies type-specific default values to an Instrument.

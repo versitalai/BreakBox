@@ -10,6 +10,7 @@ import { FilterCoefficients, FrequencyResponse, DynamicBiquadFilter, warpInfinit
 import { xxHash32 } from "js-xxhash";
 import { clamp } from "./util";
 import { NotePin, Note, Pattern, SpectrumWaveState, HarmonicsWaveState, Grain, FilterControlPoint, FilterSettings, EnvelopeSettings, Instrument, Channel, Song, HeldMod } from "./model";
+import { synthFunctionRegistry } from "./registries/SynthFunctionRegistry";
 
 declare global {
     interface Window {
@@ -5535,6 +5536,14 @@ export class Synth {
 
 
     public static getInstrumentSynthFunction(instrument: Instrument): Function {
+        // Delegate to the synth function registry first. If a factory is registered
+        // for this type, use it. This enables modular addition of new instrument types
+        // without editing this method. Falls back to the original inline implementation
+        // for backwards compatibility (e.g., types not yet registered).
+        if (synthFunctionRegistry.has(instrument.type)) {
+            return synthFunctionRegistry.get(instrument.type, instrument);
+        }
+        // Original fallback implementation preserved below.
         if (instrument.type == InstrumentType.fm) {
             const fingerprint: string = instrument.algorithm + "_" + instrument.feedbackType;
             if (Synth.fmSynthFunctionCache[fingerprint] == undefined) {
