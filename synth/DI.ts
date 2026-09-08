@@ -83,6 +83,17 @@ export class DIContainer {
     reset(): void {
         this.services.clear();
     }
+
+    /**
+     * Resolve a service by token, or return a fallback if not registered.
+     * Useful for optional dependencies.
+     */
+    resolveWithFallback<T>(token: ServiceToken, fallback: T): T {
+        if (!this.services.has(token)) {
+            return fallback;
+        }
+        return this.resolve<T>(token);
+    }
 }
 
 /**
