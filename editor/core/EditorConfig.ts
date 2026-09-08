@@ -2,6 +2,7 @@
 // Copyright (c) 2012-2022 John Nesky and contributing authors, distributed under the MIT license, see accompanying the LICENSE.md file.
 
 import { DictionaryArray, BeepBoxOption, InstrumentType, toNameMap, TypePresets } from "../../synth/SynthConfig";
+import { env } from "../../synth/Environment";
 
 export interface PresetCategory extends BeepBoxOption {
     readonly presets: DictionaryArray<Preset>;
@@ -37,6 +38,8 @@ export const fullTagList: string[] = [
 ];
 
 export const isMobile: boolean = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini|android|ipad|playbook|silk/i.test(navigator.userAgent);
+
+export const isMobileEnv: boolean = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini|android|ipad|playbook|silk/i.test(env.userAgent);
 
 export function prettyNumber(value: number): string {
     return value.toFixed(2).replace(/\.?0*$/, "");

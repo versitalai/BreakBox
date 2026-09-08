@@ -109,8 +109,8 @@ export function getEnvironment(): Environment {
  *   import { env } from './Environment';
  *   if (env.isOffline) { ... }
  */
-export const env: Environment = new Proxy({} as Environment, {
-    get(_target: object, prop: string) {
+export const env: any = new Proxy({} as Environment, {
+    get(_target: object, prop: string | symbol): any {
         return (currentEnvironment as any)[prop];
     },
 });

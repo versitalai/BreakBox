@@ -3,6 +3,7 @@
 
 import { Config } from "../../synth/SynthConfig";
 import { isMobile } from "../core/EditorConfig";
+import { env } from "../../synth/Environment";
 import { Pattern, Channel, Song, Synth } from "../../synth/synth";
 import { SongRecovery, generateUid, errorAlert } from "./SongRecovery";
 import { ColorConfig } from "../core/ColorConfig";
@@ -67,19 +68,28 @@ export class SongDocument {
     private _recordedNewSong: boolean = false;
     public _waitingToUpdateState: boolean = false;
 
+    // Environment-backed accessors for browser APIs (testable via Environment provider).
+    // These preserve exact behavior while enabling mock environments in tests.
+    private get _win(): Window | null { return env.window; }
+    private get _sessionStorage(): Storage | null { return env.sessionStorage; }
+    private get _history(): History | null { return env.history; }
+    private get _locationHash(): string { return env.locationHash; }
+    private get _locationPathname(): string { return env.window?.location.pathname ?? ''; }
+
     constructor() {
         this.notifier.watch(this._validateDocState);
 
         ColorConfig.setTheme(this.prefs.colorTheme);
         Layout.setLayout(this.prefs.layout);
 
-        if (window.sessionStorage.getItem("currentUndoIndex") == null) {
-            window.sessionStorage.setItem("currentUndoIndex", "0");
-            window.sessionStorage.setItem("oldestUndoIndex", "0");
-            window.sessionStorage.setItem("newestUndoIndex", "0");
+        const sessionStorage = env.sessionStorage;
+        if (sessionStorage && sessionStorage.getItem("currentUndoIndex") == null) {
+            sessionStorage.setItem("currentUndoIndex", "0");
+            sessionStorage.setItem("oldestUndoIndex", "0");
+            sessionStorage.setItem("newestUndoIndex", "0");
         }
 
-        let songString: string = window.location.hash;
+        let songString: string = env.locationHash;
         if (songString == "") {
             songString = this._getHash();
         }
@@ -117,8 +127,11 @@ export class SongDocument {
         }
         if (state.recoveryUid == undefined) state.recoveryUid = generateUid();
         this._replaceState(state, songString);
-        window.addEventListener("hashchange", this._whenHistoryStateChanged);
-        window.addEventListener("popstate", this._whenHistoryStateChanged);
+        const win = env.window;
+        if (win) {
+            win.addEventListener("hashchange", this._whenHistoryStateChanged);
+            win.addEventListener("popstate", this._whenHistoryStateChanged);
+        }
 
         this.bar = state.bar | 0;
         this.channel = state.channel | 0;
@@ -133,11 +146,14 @@ export class SongDocument {
         // presumably after all handlers are done updating the model, then update the
         // view before the screen renders. mouseenter and mouseleave do not bubble,
         // but they are immediately followed by mousemove which does. 
-        for (const eventName of ["change", "click", "keyup", "mousedown", "mouseup", "touchstart", "touchmove", "touchend", "touchcancel"]) {
-            window.addEventListener(eventName, this._cleanDocument);
-        }
-        for (const eventName of ["keydown", "input", "mousemove"]) {
-            window.addEventListener(eventName, this._cleanDocumentIfNotRecordingMods);
+        const winInput = env.window;
+        if (winInput) {
+            for (const eventName of ["change", "click", "keyup", "mousedown", "mouseup", "touchstart", "touchmove", "touchend", "touchcancel"]) {
+                winInput.addEventListener(eventName, this._cleanDocument);
+            }
+            for (const eventName of ["keydown", "input", "mousemove"]) {
+                winInput.addEventListener(eventName, this._cleanDocumentIfNotRecordingMods);
+            }
         }
 
         this._validateDocState();
@@ -315,46 +331,55 @@ export class SongDocument {
 
     private _getHistoryState(): HistoryState | null {
         if (this.prefs.displayBrowserUrl) {
-            return window.history.state;
+            return this._history?.state ?? null;
         } else {
-            const json: any = JSON.parse(window.sessionStorage.getItem(window.sessionStorage.getItem("currentUndoIndex")!)!);
+            const ss = this._sessionStorage;
+            if (!ss) return null;
+            const json: any = JSON.parse(ss.getItem(ss.getItem("currentUndoIndex")!)!);
             return json == null ? null : json.state;
         }
     }
 
     private _getHash(): string {
         if (this.prefs.displayBrowserUrl) {
-            return window.location.hash;
+            return this._locationHash;
         } else {
-            const json: any = JSON.parse(window.sessionStorage.getItem(window.sessionStorage.getItem("currentUndoIndex")!)!);
+            const ss = this._sessionStorage;
+            if (!ss) return "";
+            const json: any = JSON.parse(ss.getItem(ss.getItem("currentUndoIndex")!)!);
             return json == null ? "" : json.hash;
         }
     }
 
     private _replaceState(state: HistoryState, hash: string): void {
         if (this.prefs.displayBrowserUrl) {
-            window.history.replaceState(state, "", "#" + hash);
+            this._history?.replaceState(state, "", "#" + hash);
         } else {
-            window.sessionStorage.setItem(window.sessionStorage.getItem("currentUndoIndex") || "0", JSON.stringify({ state, hash }));
-            window.history.replaceState(null, "", location.pathname);
+            const ss = this._sessionStorage;
+            if (ss) {
+                ss.setItem(ss.getItem("currentUndoIndex") || "0", JSON.stringify({ state, hash }));
+            }
+            this._history?.replaceState(null, "", this._locationPathname);
         }
     }
 
     private _pushState(state: HistoryState, hash: string): void {
         if (this.prefs.displayBrowserUrl) {
-            window.history.pushState(state, "", "#" + hash);
+            this._history?.pushState(state, "", "#" + hash);
         } else {
-            let currentIndex: number = Number(window.sessionStorage.getItem("currentUndoIndex"));
-            let oldestIndex: number = Number(window.sessionStorage.getItem("oldestUndoIndex"));
+            const ss = this._sessionStorage;
+            if (!ss) { this._lastSequenceNumber = state.sequenceNumber; return; }
+            let currentIndex: number = Number(ss.getItem("currentUndoIndex"));
+            let oldestIndex: number = Number(ss.getItem("oldestUndoIndex"));
             currentIndex = (currentIndex + 1) % SongDocument._maximumUndoHistory;
-            window.sessionStorage.setItem("currentUndoIndex", String(currentIndex));
-            window.sessionStorage.setItem("newestUndoIndex", String(currentIndex));
+            ss.setItem("currentUndoIndex", String(currentIndex));
+            ss.setItem("newestUndoIndex", String(currentIndex));
             if (currentIndex == oldestIndex) {
                 oldestIndex = (oldestIndex + 1) % SongDocument._maximumUndoHistory;
-                window.sessionStorage.setItem("oldestUndoIndex", String(oldestIndex));
+                ss.setItem("oldestUndoIndex", String(oldestIndex));
             }
-            window.sessionStorage.setItem(String(currentIndex), JSON.stringify({ state, hash }));
-            window.history.replaceState(null, "", location.pathname);
+            ss.setItem(String(currentIndex), JSON.stringify({ state, hash }));
+            this._history?.replaceState(null, "", this._locationPathname);
         }
         this._lastSequenceNumber = state.sequenceNumber;
     }
@@ -365,27 +390,31 @@ export class SongDocument {
 		
 	private _forward(): void {
 		if (this.prefs.displayBrowserUrl) {
-			window.history.forward();
+			this._history?.forward();
 		} else {
-			let currentIndex: number = Number(window.sessionStorage.getItem("currentUndoIndex"));
-			let newestIndex: number = Number(window.sessionStorage.getItem("newestUndoIndex"));
+			const ss = this._sessionStorage;
+			if (!ss) return;
+			let currentIndex: number = Number(ss.getItem("currentUndoIndex"));
+			let newestIndex: number = Number(ss.getItem("newestUndoIndex"));
 			if (currentIndex != newestIndex) {
 				currentIndex = (currentIndex + 1) % SongDocument._maximumUndoHistory;
-				window.sessionStorage.setItem("currentUndoIndex", String(currentIndex));
+				ss.setItem("currentUndoIndex", String(currentIndex));
 				setTimeout(this._whenHistoryStateChanged);
 			}
 		}
 	}
-		
+	
 	private _back(): void {
 		if (this.prefs.displayBrowserUrl) {
-			window.history.back();
+			this._history?.back();
 		} else {
-			let currentIndex: number = Number(window.sessionStorage.getItem("currentUndoIndex"));
-			let oldestIndex: number = Number(window.sessionStorage.getItem("oldestUndoIndex"));
+			const ss = this._sessionStorage;
+			if (!ss) return;
+			let currentIndex: number = Number(ss.getItem("currentUndoIndex"));
+			let oldestIndex: number = Number(ss.getItem("oldestUndoIndex"));
 			if (currentIndex != oldestIndex) {
 				currentIndex = (currentIndex + SongDocument._maximumUndoHistory - 1) % SongDocument._maximumUndoHistory;
-				window.sessionStorage.setItem("currentUndoIndex", String(currentIndex));
+				ss.setItem("currentUndoIndex", String(currentIndex));
 				setTimeout(this._whenHistoryStateChanged);
 			}
 		}
@@ -397,7 +426,7 @@ export class SongDocument {
 			this.performance.abortRecording();
 		}
 		
-		if (window.history.state == null && window.location.hash != "") {
+		if (this._history?.state == null && this._locationHash != "") {
 			// The user changed the hash directly.
 			this._sequenceNumber++;
 			this._resetSongRecoveryUid();
@@ -560,7 +589,7 @@ export class SongDocument {
                 // Defer updating the url/history until all sequenced changes have
                 // committed and the interface has rendered the latest changes to
                 // improve perceived responsiveness.
-                window.requestAnimationFrame(this._updateHistoryState);
+                this._win?.requestAnimationFrame(this._updateHistoryState);
                 this._waitingToUpdateState = true;
             }
         }
@@ -636,7 +665,7 @@ export class SongDocument {
     }
 
     public getMobileLayout(): boolean {
-        return (this.prefs.layout == "wide") ? window.innerWidth <= 1000 : window.innerWidth <= 710;
+        return (this.prefs.layout == "wide") ? (this._win?.innerWidth ?? 0) <= 1000 : (this._win?.innerWidth ?? 0) <= 710;
     }
 
     public getBarWidth(): number {
