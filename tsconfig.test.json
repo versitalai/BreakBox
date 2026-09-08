@@ -1,0 +1,13 @@
+{
+    "extends": "./tsconfig_synth_only.json",
+    "compilerOptions": {
+        "types": ["node", "jest"],
+        "module": "commonjs",
+        "moduleResolution": "node",
+        "esModuleInterop": true,
+        "lib": ["ES2021", "DOM"],
+        "types": ["node", "jest"]
+    },
+    "include": ["tests/**/*.ts", "synth/**/*.ts"],
+    "exclude": ["node_modules", "website", "to_deploy"]
+}

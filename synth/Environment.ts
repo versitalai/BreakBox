@@ -115,10 +115,7 @@ export const env: Environment = new Proxy({} as Environment, {
     },
 });
 
-// For backwards compatibility: preserve the global OFFLINE variable.
-// Some code (and terser --define) still references it directly.
-// We also expose it through the Environment interface.
-declare global {
-    // eslint-disable-next-line no-var
-    var OFFLINE: boolean | undefined;
-}
+// For backwards compatibility: the global OFFLINE variable is still declared
+// in SynthConfig.ts's `declare global` block. The Environment interface
+// in this file provides a mockable abstraction layer for new code.
+// No additional global declaration needed here to avoid redeclaration conflicts.
