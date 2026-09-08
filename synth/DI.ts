@@ -109,3 +109,4 @@ export const di: DIContainer = new DIContainer();
  */
 export const I_AUDIO_ENGINE: ServiceToken = Symbol('I_AUDIO_ENGINE');
 export const I_ENVIRONMENT: ServiceToken = Symbol('I_ENVIRONMENT');
+export const I_PRESET_REGISTRY: ServiceToken = Symbol('I_PRESET_REGISTRY');

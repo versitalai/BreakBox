@@ -10,14 +10,20 @@ import { NotePin, Note, Pattern, Instrument, Channel, Song, Synth } from "../syn
 import { SongDocument } from "./model/SongDocument";
 import { ExportPrompt } from "./prompts/ExportPrompt";
 import { ChangePreset } from "./core/changes";
-import { di, I_AUDIO_ENGINE } from "../synth/DI";
+import { di, I_AUDIO_ENGINE, I_PRESET_REGISTRY } from "../synth/DI";
 import { WorkletSynthAdapter } from "./audio/WorkletSynthAdapter";
+import { createPresetRegistry } from "./presets/PresetRegistry";
 
 // Register the default audio engine implementation.
 // SongDocument resolves I_AUDIO_ENGINE from the DI container, falling back
 // to `new WorkletSynthAdapter()` if no registration exists.
 // Tests can override this registration before constructing SongDocument.
 di.register(I_AUDIO_ENGINE, WorkletSynthAdapter, true);
+
+// Register the preset registry from EditorConfig's static data.
+// This bridges the old static presetCategories with the new registry API.
+const presetRegistry = createPresetRegistry(EditorConfig.presetCategories);
+di.register(I_PRESET_REGISTRY, presetRegistry, true);
 
 
 //namespace beepbox {
