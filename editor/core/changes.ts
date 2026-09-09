@@ -5731,3 +5731,56 @@ export class ChangeSetEnvelopeWaveform extends Change {
         }
     }
 }
+
+export class ChangeSampleGain extends Change {
+    constructor(doc: SongDocument, oldValue: number, newValue: number) {
+        super();
+        const instrument: Instrument = doc.song.channels[doc.channel].instruments[doc.getCurrentInstrument()];
+        const gain = newValue / 10; // slider is 0-20, gain is 0-2
+        if (instrument.sampleGain != gain) {
+            instrument.sampleGain = gain;
+            instrument.preset = instrument.type;
+            doc.notifier.changed();
+            this._didSomething();
+        }
+    }
+}
+
+export class ChangeSampleNote extends Change {
+    constructor(doc: SongDocument, newValue: number) {
+        super();
+        const instrument: Instrument = doc.song.channels[doc.channel].instruments[doc.getCurrentInstrument()];
+        if (instrument.sampleNote != newValue) {
+            instrument.sampleNote = newValue;
+            instrument.preset = instrument.type;
+            doc.notifier.changed();
+            this._didSomething();
+        }
+    }
+}
+
+export class ChangeSampleRootKey extends Change {
+    constructor(doc: SongDocument, newValue: number) {
+        super();
+        const instrument: Instrument = doc.song.channels[doc.channel].instruments[doc.getCurrentInstrument()];
+        if (instrument.sampleRootKey != newValue) {
+            instrument.sampleRootKey = newValue;
+            instrument.preset = instrument.type;
+            doc.notifier.changed();
+            this._didSomething();
+        }
+    }
+}
+
+export class ChangeSampleUrl extends Change {
+    constructor(doc: SongDocument, newValue: string) {
+        super();
+        const instrument: Instrument = doc.song.channels[doc.channel].instruments[doc.getCurrentInstrument()];
+        if (instrument.sampleUrl != newValue) {
+            instrument.sampleUrl = newValue;
+            instrument.preset = instrument.type;
+            doc.notifier.changed();
+            this._didSomething();
+        }
+    }
+}

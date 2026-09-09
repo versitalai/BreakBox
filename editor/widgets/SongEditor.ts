@@ -47,7 +47,7 @@ import { SpectrumEditor, SpectrumEditorPrompt } from "./SpectrumEditor";
 import { CustomThemePrompt } from "../prompts/CustomThemePrompt";
 import { ThemePrompt } from "../prompts/ThemePrompt";
 import { TipPrompt } from "../prompts/TipPrompt";
-import { ChangeTempo, ChangeKeyOctave, ChangeChorus, ChangeEchoDelay, ChangeEchoSustain, ChangeReverb, ChangeVolume, ChangePan, ChangePatternSelection, ChangePatternsPerChannel, ChangePatternNumbers, ChangeSupersawDynamism, ChangeSupersawSpread, ChangeSupersawShape, ChangePulseWidth, ChangeFeedbackAmplitude, ChangeOperatorAmplitude, ChangeOperatorFrequency, ChangeDrumsetEnvelope, ChangePasteInstrument, ChangePreset, pickRandomPresetValue, ChangeRandomGeneratedInstrument, ChangeEQFilterType, ChangeNoteFilterType, ChangeEQFilterSimpleCut, ChangeEQFilterSimplePeak, ChangeNoteFilterSimpleCut, ChangeNoteFilterSimplePeak, ChangeScale, ChangeDetectKey, ChangeKey, ChangeRhythm, ChangeFeedbackType, ChangeAlgorithm, ChangeChipWave, ChangeNoiseWave, ChangeTransition, ChangeToggleEffects, ChangeVibrato, ChangeUnison, ChangeChord, ChangeSong, ChangePitchShift, ChangeDetune, ChangeDistortion, ChangeStringSustain, ChangeBitcrusherFreq, ChangeBitcrusherQuantization, ChangeAddEnvelope, ChangeEnvelopeSpeed, ChangeAddChannelInstrument, ChangeRemoveChannelInstrument, ChangeCustomWave, ChangeOperatorWaveform, ChangeOperatorPulseWidth, ChangeSongTitle, ChangeVibratoDepth, ChangeVibratoSpeed, ChangeVibratoDelay, ChangeVibratoType, ChangePanDelay, ChangeArpeggioSpeed, ChangeFastTwoNoteArp, ChangeClicklessTransition, ChangeAliasing, ChangeSetPatternInstruments, ChangeHoldingModRecording, ChangeChipWavePlayBackwards, ChangeChipWaveStartOffset, ChangeChipWaveLoopEnd, ChangeChipWaveLoopStart, ChangeChipWaveLoopMode, ChangeChipWaveUseAdvancedLoopControls, ChangeDecimalOffset, ChangeUnisonVoices, ChangeUnisonSpread, ChangeUnisonOffset, ChangeUnisonExpression, ChangeUnisonSign, Change6OpFeedbackType, Change6OpAlgorithm, ChangeCustomAlgorythmorFeedback, ChangeRingMod, ChangeRingModHz, ChangeRingModChipWave, ChangeRingModPulseWidth, ChangeGranular, ChangeGrainSize, ChangeGrainAmounts, ChangeGrainRange, ChangeMonophonicTone, ChangePhaserMix, ChangePhaserFreq, ChangePhaserFeedback, ChangePhaserStages, ChangeInvertWave, ChangeUpperLimit, ChangeLowerLimit, pickNextPresetValue } from "../core/changes";
+import { ChangeTempo, ChangeKeyOctave, ChangeChorus, ChangeEchoDelay, ChangeEchoSustain, ChangeReverb, ChangeVolume, ChangePan, ChangePatternSelection, ChangePatternsPerChannel, ChangePatternNumbers, ChangeSupersawDynamism, ChangeSupersawSpread, ChangeSupersawShape, ChangePulseWidth, ChangeFeedbackAmplitude, ChangeOperatorAmplitude, ChangeOperatorFrequency, ChangeDrumsetEnvelope, ChangePasteInstrument, ChangePreset, pickRandomPresetValue, ChangeRandomGeneratedInstrument, ChangeEQFilterType, ChangeNoteFilterType, ChangeEQFilterSimpleCut, ChangeEQFilterSimplePeak, ChangeNoteFilterSimpleCut, ChangeNoteFilterSimplePeak, ChangeScale, ChangeDetectKey, ChangeKey, ChangeRhythm, ChangeFeedbackType, ChangeAlgorithm, ChangeChipWave, ChangeNoiseWave, ChangeTransition, ChangeToggleEffects, ChangeVibrato, ChangeUnison, ChangeChord, ChangeSong, ChangePitchShift, ChangeDetune, ChangeDistortion, ChangeStringSustain, ChangeBitcrusherFreq, ChangeBitcrusherQuantization, ChangeAddEnvelope, ChangeEnvelopeSpeed, ChangeAddChannelInstrument, ChangeRemoveChannelInstrument, ChangeCustomWave, ChangeOperatorWaveform, ChangeOperatorPulseWidth, ChangeSongTitle, ChangeVibratoDepth, ChangeVibratoSpeed, ChangeVibratoDelay, ChangeVibratoType, ChangePanDelay, ChangeArpeggioSpeed, ChangeFastTwoNoteArp, ChangeClicklessTransition, ChangeAliasing, ChangeSetPatternInstruments, ChangeHoldingModRecording, ChangeChipWavePlayBackwards, ChangeChipWaveStartOffset, ChangeChipWaveLoopEnd, ChangeChipWaveLoopStart, ChangeChipWaveLoopMode, ChangeChipWaveUseAdvancedLoopControls, ChangeDecimalOffset, ChangeUnisonVoices, ChangeUnisonSpread, ChangeUnisonOffset, ChangeUnisonExpression, ChangeUnisonSign, Change6OpFeedbackType, Change6OpAlgorithm, ChangeCustomAlgorythmorFeedback, ChangeRingMod, ChangeRingModHz, ChangeRingModChipWave, ChangeRingModPulseWidth, ChangeGranular, ChangeGrainSize, ChangeGrainAmounts, ChangeGrainRange, ChangeMonophonicTone, ChangePhaserMix, ChangePhaserFreq, ChangePhaserFeedback, ChangePhaserStages, ChangeInvertWave, ChangeUpperLimit, ChangeLowerLimit, pickNextPresetValue, ChangeSampleGain, ChangeSampleNote, ChangeSampleRootKey, ChangeSampleUrl } from "../core/changes";
 
 import { TrackEditor } from "./TrackEditor";
 import { oscilloscopeCanvas } from "../../global/Oscilloscope";
@@ -98,6 +98,7 @@ function buildPresetOptions(isNoise: boolean, idSet: string): HTMLSelectElement 
         menu.appendChild(option({ value: InstrumentType.pickedString }, EditorConfig.valueToPreset(InstrumentType.pickedString)!.name));
         menu.appendChild(option({ value: InstrumentType.spectrum }, EditorConfig.valueToPreset(InstrumentType.spectrum)!.name));
         menu.appendChild(option({ value: InstrumentType.noise }, EditorConfig.valueToPreset(InstrumentType.noise)!.name));
+        menu.appendChild(option({ value: InstrumentType.sampleTrigger }, EditorConfig.valueToPreset(InstrumentType.sampleTrigger)!.name));
     }
 
     // TODO - When you port over the Dogebox2 import/export buttons be sure to uncomment these
@@ -1048,7 +1049,19 @@ export class SongEditor {
         div({ style: "color: " + ColorConfig.secondaryText + "; margin-top: -3px;" }, this._unisonSignInputBox),
     ));
     private readonly _unisonDropdownGroup: HTMLElement = div({ class: "editor-controls", style: "display: none; gap: 3px; margin-bottom: 0.5em;" }, this._unisonVoicesRow, this._unisonSpreadRow, this._unisonOffsetRow, this._unisonExpressionRow, this._unisonSignRow);
-   
+
+    // Sample-trigger instrument rows
+    private readonly _sampleUrlInput: HTMLInputElement = input({ style: "width: 100%; height: 1.5em; font-size: 80%;", type: "text", placeholder: "Paste sample URL...", id: "sampleUrlInput" });
+    private readonly _sampleUrlRow: HTMLDivElement = div({ class: "selectRow", style: "display: none;" }, span({ class: "tip", onclick: () => this._openPrompt("sampleTrigger") }, "Sample URL:"), div({ class: "selectContainer" }, this._sampleUrlInput));
+    private readonly _sampleNoteInput: HTMLInputElement = input({ style: "width: 3em; height: 1.5em; font-size: 80%;", type: "number", step: "1", min: "0", max: "127", value: "60" });
+    private readonly _sampleNoteRow: HTMLDivElement = div({ class: "selectRow", style: "display: none;" }, span({ class: "tip" }, "Trigger Note:"), this._sampleNoteInput);
+    private readonly _sampleRootKeyInput: HTMLInputElement = input({ style: "width: 3em; height: 1.5em; font-size: 80%;", type: "number", step: "1", min: "0", max: "127", value: "60" });
+    private readonly _sampleRootKeyRow: HTMLDivElement = div({ class: "selectRow", style: "display: none;" }, span({ class: "tip" }, "Root Key:"), this._sampleRootKeyInput);
+    private readonly _sampleGainSlider: Slider = new Slider(input({ style: "margin: 0;", type: "range", min: "0", max: "20", value: "10", step: "1" }), this.doc, (oldValue: number, newValue: number) => new ChangeSampleGain(this.doc, oldValue, newValue), false);
+    private readonly _sampleGainRow: HTMLDivElement = div({ class: "selectRow", style: "display: none;" }, span({ class: "tip" }, "Sample Gain:"), this._sampleGainSlider.container);
+    private readonly _sampleLoadButton: HTMLButtonElement = button({ class: "sampleLoadButton", style: "height: auto; min-height: var(--button-size); margin-left: 0.5em;" }, "Load Sample");
+    private readonly _sampleLoadRow: HTMLDivElement = div({ class: "selectRow", style: "display: none;" }, this._sampleLoadButton);
+
     private readonly _chordSelect: HTMLSelectElement = buildOptions(select({ style: "flex-shrink: 100"}), Config.chords.map(chord => chord.name));
     private readonly _chordDropdown: HTMLButtonElement = button({ style: "margin-left:0em; height:1.5em; width: 10px; padding: 0px; font-size: 8px;", onclick: () => this._toggleDropdownMenu(DropdownID.Chord) }, "▼");
     private readonly _monophonicNoteInputBox: HTMLInputElement = input({ style: "width: 2.35em; height: 1.5em; font-size: 80%; margin: 0.5em; vertical-align: middle;", id: "unisonSignInputBox", type: "number", step: "1", min: 1, max: Config.maxChordSize, value: 1.0 });
@@ -1308,6 +1321,11 @@ export class SongEditor {
         this._instrumentVolumeSliderRow,
         //this._customizeInstrumentButton,
         this._customInstrumentSettingsGroup,
+        this._sampleUrlRow,
+        this._sampleNoteRow,
+        this._sampleRootKeyRow,
+        this._sampleGainRow,
+        this._sampleLoadRow,
     );
     private readonly _usedPatternIndicator: SVGElement = SVG.path({ d: "M -6 -6 H 6 V 6 H -6 V -6 M -2 -3 L -2 -3 L -1 -4 H 1 V 4 H -1 V -1.2 L -1.2 -1 H -2 V -3 z", fill: ColorConfig.indicatorSecondary, "fill-rule": "evenodd" });
     private readonly _usedInstrumentIndicator: SVGElement = SVG.path({ d: "M -6 -0.8 H -3.8 V -6 H 0.8 V 4.4 H 2.2 V -0.8 H 6 V 0.8 H 3.8 V 6 H -0.8 V -4.4 H -2.2 V 0.8 H -6 z", fill: ColorConfig.indicatorSecondary });
@@ -1704,6 +1722,20 @@ export class SongEditor {
         this._effectsSelect.addEventListener("change", this._whenSetEffects);
         this._unisonSelect.addEventListener("change", this._whenSetUnison);
         this._chordSelect.addEventListener("change", this._whenSetChord);
+
+        // Sample-trigger instrument event handlers
+        this._sampleUrlInput.addEventListener("change", () => {
+            this.doc.record(new ChangeSampleUrl(this.doc, this._sampleUrlInput.value));
+        });
+        this._sampleNoteInput.addEventListener("change", () => {
+            this.doc.record(new ChangeSampleNote(this.doc, parseInt(this._sampleNoteInput.value) || 60));
+        });
+        this._sampleRootKeyInput.addEventListener("change", () => {
+            this.doc.record(new ChangeSampleRootKey(this.doc, parseInt(this._sampleRootKeyInput.value) || 60));
+        });
+        this._sampleLoadButton.addEventListener("click", () => {
+            this._openPrompt("addExternal");
+        });
         this._monophonicNoteInputBox.addEventListener("input", this._whenSetMonophonicNote)
         this._vibratoSelect.addEventListener("change", this._whenSetVibrato);
         this._vibratoTypeSelect.addEventListener("change", this._whenSetVibratoType);
@@ -3065,6 +3097,26 @@ export class SongEditor {
             } else {
                 this._unisonSelectRow.style.display = "none";
                 this._unisonDropdownGroup.style.display = "none";
+            }
+
+            // Sample-trigger: show sample controls, hide unison
+            if (instrument.type == InstrumentType.sampleTrigger) {
+                this._sampleUrlRow.style.display = "";
+                this._sampleNoteRow.style.display = "";
+                this._sampleRootKeyRow.style.display = "";
+                this._sampleGainRow.style.display = "";
+                this._sampleLoadRow.style.display = "";
+                this._sampleUrlInput.value = instrument.sampleUrl;
+                this._sampleNoteInput.value = String(instrument.sampleNote);
+                this._sampleRootKeyInput.value = String(instrument.sampleRootKey);
+                this._sampleGainSlider.updateValue(instrument.sampleGain * 10);
+                this._unisonSelectRow.style.display = "none";
+            } else {
+                this._sampleUrlRow.style.display = "none";
+                this._sampleNoteRow.style.display = "none";
+                this._sampleRootKeyRow.style.display = "none";
+                this._sampleGainRow.style.display = "none";
+                this._sampleLoadRow.style.display = "none";
             }
 
             if (this._openEnvelopeDropdown)
