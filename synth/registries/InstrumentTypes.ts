@@ -22,5 +22,6 @@ import './instrumentTypes/supersaw';
 import './instrumentTypes/customChipWave';
 import './instrumentTypes/mod';
 import './instrumentTypes/fm6op';
+import './instrumentTypes/sampleTrigger';
 
 export { instrumentTypeRegistry, InstrumentTypeSpec, ApplyDefaultsFn } from './InstrumentTypeRegistry';

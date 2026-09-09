@@ -2073,6 +2073,13 @@ class InstrumentState {
             this.unisonOffset = instrument.unisonOffset;
             this.unisonExpression = instrument.unisonExpression;
             this.unisonSign = instrument.unisonSign;
+        } else if (instrument.type == InstrumentType.sampleTrigger) {
+            this.wave = instrument.sampleBuffer;
+            this.unisonVoices = 1;
+            this.unisonSpread = 0;
+            this.unisonOffset = 0;
+            this.unisonExpression = 1.4;
+            this.unisonSign = 1.0;
         } else if (instrument.type == InstrumentType.drumset) {
             for (let i: number = 0; i < Config.drumCount; i++) {
                 this.drumsetSpectrumWaves[i].getCustomWave(instrument.drumsetSpectrumWaves[i], InstrumentState._drumsetIndexToSpectrumOctave(i));
@@ -4599,6 +4606,9 @@ export class Synth {
             expressionReferencePitch = 0;
             pitchDamping = 1.0;
             basePitch = 0;
+        } else if (instrument.type == InstrumentType.sampleTrigger) {
+            baseExpression = Config.chipBaseExpression;
+            // Pitch is determined by sample playback, not basePitch
         } else {
             throw new Error("Unknown instrument type in computeTone.");
         }
@@ -6179,6 +6189,89 @@ export class Synth {
             Synth.chipFunctionCache[instrumentState.unisonVoices] = chipFunction;
         }
         chipFunction(synth, bufferIndex, roundedSamplesPerTick, tone, instrumentState);
+    }
+
+    public static sampleTriggerSynth(synth: Synth, bufferIndex: number, roundedSamplesPerTick: number, tone: Tone, instrumentState: InstrumentState): void {
+        // Sample-trigger instrument: plays a custom sample when a specific note is hit.
+        // The sample is stored in instrumentState.wave (same buffer mechanism as chip/harmonics).
+        // Resolve the instrument: walk channels to find the one containing this tone's instrument index.
+        const song = synth.song!;
+        let instrument: Instrument | null = null;
+        for (let ci = 0; ci < song.getChannelCount(); ci++) {
+            const ch = song.channels[ci];
+            if (tone.instrumentIndex < ch.instruments.length) {
+                instrument = ch.instruments[tone.instrumentIndex];
+                break;
+            }
+        }
+        if (instrument == null) return;
+
+        // Only trigger on the configured note
+        if (tone.pitches[0] !== instrument.sampleNote) return;
+
+        const wave = instrumentState.wave;
+        if (wave == null || wave.length === 0) return;
+
+        const data = synth.tempMonoInstrumentSampleBuffer;
+        if (data == null) return;
+        const volumeScale = instrumentState.volumeScale * instrument.sampleGain;
+        const waveLength = wave.length - 1;
+
+        // Calculate pitch shift: semitone offset from sample's root key to played note
+        const semitoneOffset = tone.pitches[0] - instrument.sampleRootKey;
+        const pitchMultiplier = Math.pow(2, semitoneOffset / 12);
+
+        // Phase increment per output sample, adjusted for sample rate difference
+        const sampleRate = instrument.sampleSampleRate || 44100;
+        const phaseDelta = pitchMultiplier * sampleRate / synth.samplesPerSecond;
+
+        let phase = 0.0;
+        // Reuse tone phases array[0] for persistent playback position across ticks
+        if (tone.atNoteStart) {
+            phase = 0.0;
+            tone.phases[0] = 0.0;
+        } else {
+            phase = tone.phases[0] * waveLength;
+        }
+
+        const filters = tone.noteFilters;
+        const filterCount = tone.noteFilterCount | 0;
+        let initialFilterInput1 = +tone.initialNoteFilterInput1;
+        let initialFilterInput2 = +tone.initialNoteFilterInput2;
+        const applyFilters = Synth.applyFilters;
+
+        let expression = +tone.expression;
+        const expressionDelta = +tone.expressionDelta;
+
+        const stopIndex = bufferIndex + roundedSamplesPerTick;
+        for (let sampleIndex = bufferIndex; sampleIndex < stopIndex; sampleIndex++) {
+            const phaseInt = phase | 0;
+            if (phaseInt >= waveLength) {
+                // Sample finished playing
+                break;
+            }
+
+            // Linear interpolation for sample playback
+            const phaseRatio = phase - phaseInt;
+            const sample = wave[phaseInt] + (wave[phaseInt + 1] - wave[phaseInt]) * phaseRatio;
+
+            const filteredSample = applyFilters(sample * volumeScale, initialFilterInput1, initialFilterInput2, filterCount, filters);
+            initialFilterInput2 = initialFilterInput1;
+            initialFilterInput1 = sample * volumeScale;
+
+            const output = filteredSample * expression;
+            expression += expressionDelta;
+            data[sampleIndex] += output;
+
+            phase += phaseDelta;
+        }
+
+        // Store playback position for next tick
+        tone.phases[0] = phase / waveLength;
+        tone.expression = expression;
+        synth.sanitizeFilters(filters);
+        tone.initialNoteFilterInput1 = initialFilterInput1;
+        tone.initialNoteFilterInput2 = initialFilterInput2;
     }
 
     private static harmonicsSynth(synth: Synth, bufferIndex: number, roundedSamplesPerTick: number, tone: Tone, instrumentState: InstrumentState): void {

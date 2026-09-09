@@ -116,7 +116,7 @@ export const enum SongTagCode {
     arpeggioSpeed = CharCode.G, // added in JummBox URL version 3 for arpeggioSpeed, DEPRECATED
     harmonics = CharCode.H, // added in BeepBox URL version 7
     stringSustain = CharCode.I, // added in BeepBox URL version 9
-    //	                    = CharCode.J,
+    sampleData = CharCode.J, // added in BreakBox for sample-trigger instrument
     //	                    = CharCode.K,
     pan = CharCode.L, // added between 8 and 9, DEPRECATED
     customChipWave = CharCode.M, // added in JummBox URL version 1(?) for customChipWave
@@ -131,7 +131,7 @@ export const enum SongTagCode {
     feedbackEnvelope = CharCode.V, // added in BeepBox URL version 6, DEPRECATED
     pulseWidth = CharCode.W, // added in BeepBox URL version 7
     aliases = CharCode.X, // added in JummBox URL version 4 for aliases, DEPRECATED, [UB] repurposed for PWM decimal offset (DEPRECATED as well)
-    //                      = CharCode.Y, 
+    //                      = CharCode.Y,
     //	                    = CharCode.Z,
     //	                    = CharCode.NUM_0,
     //	                    = CharCode.NUM_1,

@@ -1321,6 +1321,14 @@ export class Instrument {
     public customChipWave: Float32Array = new Float32Array(64);
     public customChipWaveIntegral: Float32Array = new Float32Array(65); // One extra element for wrap-around in chipSynth.
     public readonly operators: Operator[] = [];
+    // Sample-trigger instrument fields
+    public sampleUrl: string = "";
+    public sampleNote: number = 60;
+    public sampleRootKey: number = 60;
+    public sampleGain: number = 1.0;
+    public sampleBuffer: Float32Array | null = null;
+    public sampleSampleRate: number = 44100;
+
     public readonly spectrumWave: SpectrumWave;
     public readonly harmonicsWave: HarmonicsWave = new HarmonicsWave();
     public readonly drumsetEnvelopes: number[] = [];
@@ -1534,6 +1542,14 @@ export class Instrument {
                     for (let i: number = 0; i < this.operators.length; i++) {
                         this.operators[i].reset(i);
                     }
+                    break;
+                case InstrumentType.sampleTrigger:
+                    this.sampleUrl = "";
+                    this.sampleNote = 60;
+                    this.sampleRootKey = 60;
+                    this.sampleGain = 1.0;
+                    this.sampleBuffer = null;
+                    this.sampleSampleRate = 44100;
                     break;
                 case InstrumentType.noise:
                     this.chipNoise = 1;
@@ -3708,6 +3724,20 @@ export class Song {
                     buffer.push(SongTagCode.stringSustain, base64IntToCharCode[instrument.stringSustain | (instrument.stringSustainType << 5)]);
                 } else if (instrument.type == InstrumentType.mod) {
                     // Handled down below. Could be moved, but meh.
+                } else if (instrument.type == InstrumentType.sampleTrigger) {
+                    // Serialize sample URL as length-prefixed string, then note/rootKey/gain
+                    const urlLen = Math.min(instrument.sampleUrl.length, 63);
+                    buffer.push(SongTagCode.sampleData);
+                    buffer.push(base64IntToCharCode[urlLen]);
+                    for (let i = 0; i < urlLen; i++) {
+                        buffer.push(instrument.sampleUrl.charCodeAt(i));
+                    }
+                    buffer.push(SongTagCode.sampleData);
+                    buffer.push(base64IntToCharCode[instrument.sampleNote]);
+                    // rootKey range: 0-127 (MIDI notes), offset by 64 → 64-191, needs 2 chars
+                    const rootKey = clamp(0, 127, instrument.sampleRootKey);
+                    buffer.push(base64IntToCharCode[rootKey >> 6], base64IntToCharCode[rootKey & 0x3F]);
+                    buffer.push(base64IntToCharCode[Math.round(instrument.sampleGain * 10)]);
                 } else {
                     throw new Error("Unknown instrument type.");
                 }
@@ -4775,6 +4805,25 @@ export class Song {
                 const sustainValue: number = base64CharCodeToInt[compressed.charCodeAt(charIndex++)];
                 instrument.stringSustain = clamp(0, Config.stringSustainRange, sustainValue & 0x1F);
                 instrument.stringSustainType = Config.enableAcousticSustain ? clamp(0, SustainType.length, sustainValue >> 5) : SustainType.bright;
+            } break;
+            case SongTagCode.sampleData: {
+                const instrument: Instrument = this.channels[instrumentChannelIterator].instruments[instrumentIndexIterator];
+                const urlLen: number = base64CharCodeToInt[compressed.charCodeAt(charIndex++)];
+                let url = "";
+                for (let i = 0; i < urlLen; i++) {
+                    url += String.fromCharCode(compressed.charCodeAt(charIndex++));
+                }
+                instrument.sampleUrl = url;
+                // Second sampleData tag contains note/rootKey/gain
+                if (compressed.charCodeAt(charIndex) === SongTagCode.sampleData) {
+                    charIndex++;
+                    instrument.sampleNote = base64CharCodeToInt[compressed.charCodeAt(charIndex++)];
+                    // rootKey is 2 base64 chars: high 6 bits + low 6 bits
+                    const rootKeyHigh = base64CharCodeToInt[compressed.charCodeAt(charIndex++)];
+                    const rootKeyLow = base64CharCodeToInt[compressed.charCodeAt(charIndex++)];
+                    instrument.sampleRootKey = clamp(0, 127, (rootKeyHigh << 6) | rootKeyLow);
+                    instrument.sampleGain = base64CharCodeToInt[compressed.charCodeAt(charIndex++)] / 10;
+                }
             } break;
             case SongTagCode.fadeInOut: {
                 if ((beforeNine && fromBeepBox) || ((fromJummBox && beforeFive) || (beforeFour && fromGoldBox))) {

@@ -125,6 +125,11 @@ synthFunctionRegistry.register(InstrumentType.mod, (instrument: Instrument) => {
     return (Synth as any).modSynth;
 });
 
+// sample trigger: plays a custom sample when a specific note is hit
+synthFunctionRegistry.register(InstrumentType.sampleTrigger, (instrument: Instrument) => {
+    return (Synth as any).sampleTriggerSynth;
+});
+
 // fm6op: uses JIT-compiled synth function with caching (same as fm but with custom algorithm)
 synthFunctionRegistry.register(InstrumentType.fm6op, (instrument: Instrument) => {
     const fingerprint: string = instrument.customAlgorithm.name + "_" + instrument.customFeedbackType.name;
