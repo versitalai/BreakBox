@@ -1222,6 +1222,22 @@ export interface HeldMod {
     holdFor: number;
 }
 
+/**
+ * Structural type for instrument extensions. Defined here (rather than importing
+ * from InstrumentExtension.ts) to avoid a circular import: InstrumentExtension.ts
+ * imports Instrument from this file.
+ *
+ * This stays in sync with the InstrumentExtension interface manually.
+ * If you change that interface, update this type too.
+ */
+export interface InstrumentExtensionLike {
+    readonly id: string;
+    onCompute?: (ctx: { instrument: Instrument; instrumentState: any; channelIndex: number; instrumentIndex: number }) => void;
+    routeNote?: (ctx: { tone: any; instrument: Instrument; instrumentState: any; defaultSynth: Function }) => any[] | null;
+    serialize?: (instrument: Instrument) => number[];
+    deserialize?: (instrument: Instrument, data: number[], index: number) => number;
+}
+
 export class Instrument {
     public type: InstrumentType = InstrumentType.chip;
     public preset: number = 0;
@@ -1346,7 +1362,7 @@ export class Instrument {
     public isNoiseInstrument: boolean = false;
 
     /** Plugged-in extensions for per-note behavior (note routing, sample keymaps, etc). */
-    public extensions: any[] = [];
+    public extensions: InstrumentExtensionLike[] = [];
     constructor(isNoiseChannel: boolean, isModChannel: boolean) {
 
         // @jummbus - My screed on how modulator arrays for instruments work, for the benefit of myself in the future, or whoever else.
@@ -1545,14 +1561,6 @@ export class Instrument {
                     for (let i: number = 0; i < this.operators.length; i++) {
                         this.operators[i].reset(i);
                     }
-                    break;
-                case InstrumentType.sampleTrigger:
-                    this.sampleUrl = "";
-                    this.sampleNote = 60;
-                    this.sampleRootKey = 60;
-                    this.sampleGain = 1.0;
-                    this.sampleBuffer = null;
-                    this.sampleSampleRate = 44100;
                     break;
                 case InstrumentType.noise:
                     this.chipNoise = 1;
@@ -3728,7 +3736,8 @@ export class Song {
                 } else if (instrument.type == InstrumentType.mod) {
                     // Handled down below. Could be moved, but meh.
                 } else if (instrument.type == InstrumentType.sampleTrigger) {
-                    // Serialize sample URL as length-prefixed string, then note/rootKey/gain
+                    // Serialize sample URL as length-prefixed string (max 63 chars, truncated silently).
+                    // Then note/rootKey/gain/sampleRate as second sampleData payload.
                     const urlLen = Math.min(instrument.sampleUrl.length, 63);
                     buffer.push(SongTagCode.sampleData);
                     buffer.push(base64IntToCharCode[urlLen]);
@@ -3737,10 +3746,13 @@ export class Song {
                     }
                     buffer.push(SongTagCode.sampleData);
                     buffer.push(base64IntToCharCode[instrument.sampleNote]);
-                    // rootKey range: 0-127 (MIDI notes), offset by 64 → 64-191, needs 2 chars
+                    // rootKey range: 0-127 (MIDI notes), needs 2 chars
                     const rootKey = clamp(0, 127, instrument.sampleRootKey);
                     buffer.push(base64IntToCharCode[rootKey >> 6], base64IntToCharCode[rootKey & 0x3F]);
                     buffer.push(base64IntToCharCode[Math.round(instrument.sampleGain * 10)]);
+                    // sampleRate / 100, clamped to 0-4095 (supports up to 409500 Hz)
+                    const sampleRateEncoded = clamp(0, 4095, Math.round((instrument.sampleSampleRate || 44100) / 100));
+                    buffer.push(base64IntToCharCode[sampleRateEncoded >> 6], base64IntToCharCode[sampleRateEncoded & 0x3F]);
                 } else {
                     throw new Error("Unknown instrument type.");
                 }
@@ -4826,6 +4838,10 @@ export class Song {
                     const rootKeyLow = base64CharCodeToInt[compressed.charCodeAt(charIndex++)];
                     instrument.sampleRootKey = clamp(0, 127, (rootKeyHigh << 6) | rootKeyLow);
                     instrument.sampleGain = base64CharCodeToInt[compressed.charCodeAt(charIndex++)] / 10;
+                    // sampleRate is 2 base64 chars (sampleRate / 100)
+                    const srHigh = base64CharCodeToInt[compressed.charCodeAt(charIndex++)];
+                    const srLow = base64CharCodeToInt[compressed.charCodeAt(charIndex++)];
+                    instrument.sampleSampleRate = (srHigh << 6 | srLow) * 100;
                 }
             } break;
             case SongTagCode.fadeInOut: {

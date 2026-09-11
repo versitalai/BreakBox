@@ -874,6 +874,12 @@ class EnvelopeComputer {
 import { Voice, VoiceMode } from "./registries/VoiceTypes";
 export { Voice, VoiceMode } from "./registries/VoiceTypes";
 
+// Pre-allocated singletons to avoid allocation in the synth hot path.
+// _defaultVoice is mutated in-place by _routeTone (synthFunction + tone are per-call).
+// _emptyVoiceArray is returned when no voices should render.
+const _defaultVoice: Voice[] = [{ synthFunction: (() => {}) as Function, tone: null as any, mode: VoiceMode.Layer, gain: 1.0 }];
+const _emptyVoiceArray: Voice[] = [];
+
 class Tone {
     public instrumentIndex: number;
     public readonly pitches: number[] = Array(Config.maxChordSize + 2).fill(0);
@@ -4492,14 +4498,23 @@ export class Synth {
      */
     private _routeTone(tone: Tone, instrument: Instrument, instrumentState: InstrumentState): Voice[] {
         const synth = instrumentState.synthesizer;
-        if (synth == null) return [];
+        if (synth == null) return _emptyVoiceArray;
 
-        // Default: single voice using the instrument's synth function.
-        let voices: Voice[] | null = [{ synthFunction: synth, tone: tone, mode: VoiceMode.Layer, gain: 1.0 }];
+        // Fast path: no extensions — return a single default voice.
+        if (instrument.extensions.length === 0) {
+            _defaultVoice[0]!.synthFunction = synth;
+            _defaultVoice[0]!.tone = tone;
+            return _defaultVoice;
+        }
 
-        // Let each extension's routeNote modify the voice list.
-        // Extensions are called in order. Each receives the current voice list
-        // and can return a replacement (or null to keep the current list).
+        // Slow path: let each extension's routeNote modify the voice list.
+        // Extensions are called in order. A non-null return replaces the
+        // current voice list entirely ("last non-null writer wins").
+        // Returning null keeps the current list unchanged.
+        let voices: Voice[] | null = _defaultVoice;
+        _defaultVoice[0]!.synthFunction = synth;
+        _defaultVoice[0]!.tone = tone;
+
         for (const extension of instrument.extensions) {
             if (extension.routeNote) {
                 const result = extension.routeNote({ tone, instrument, instrumentState, defaultSynth: synth });
@@ -4509,7 +4524,7 @@ export class Synth {
             }
         }
 
-        return voices != null ? voices : [];
+        return voices != null ? voices : _emptyVoiceArray;
     }
 
     private playTone(channelIndex: number, bufferIndex: number, runLength: number, tone: Tone): void {
