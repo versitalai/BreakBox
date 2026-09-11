@@ -1233,7 +1233,7 @@ export interface HeldMod {
 export interface InstrumentExtensionLike {
     readonly id: string;
     onCompute?: (ctx: { instrument: Instrument; instrumentState: any; channelIndex: number; instrumentIndex: number }) => void;
-    routeNote?: (ctx: { tone: any; instrument: Instrument; instrumentState: any; defaultSynth: Function }) => any[] | null;
+    routeNote?: (ctx: { tone: any; instrument: Instrument; instrumentState: any; defaultSynth: Function }) => { synthFunction: Function; tone: any; mode: number; gain: number; }[] | null;
     serialize?: (instrument: Instrument) => number[];
     deserialize?: (instrument: Instrument, data: number[], index: number) => number;
 }
@@ -3756,8 +3756,9 @@ export class Song {
                     const rootKey = clamp(0, 127, instrument.sampleRootKey);
                     buffer.push(base64IntToCharCode[rootKey >> 6], base64IntToCharCode[rootKey & 0x3F]);
                     buffer.push(base64IntToCharCode[Math.round(instrument.sampleGain * 10)]);
-                    // sampleRate / 100, clamped to 0-4095 (supports up to 409500 Hz)
-                    const sampleRateEncoded = clamp(0, 4095, Math.round((instrument.sampleSampleRate || 44100) / 100));
+                    // sampleRate / 50, clamped to 0-4095 (supports up to 204750 Hz)
+                    // Common rates: 8000→160, 22050→441, 44100→882, 48000→960, 96000→1920
+                    const sampleRateEncoded = clamp(0, 4095, Math.round((instrument.sampleSampleRate || 44100) / 50));
                     buffer.push(base64IntToCharCode[sampleRateEncoded >> 6], base64IntToCharCode[sampleRateEncoded & 0x3F]);
                 } else {
                     throw new Error("Unknown instrument type.");
@@ -4844,10 +4845,10 @@ export class Song {
                     const rootKeyLow = base64CharCodeToInt[compressed.charCodeAt(charIndex++)];
                     instrument.sampleRootKey = clamp(0, 127, (rootKeyHigh << 6) | rootKeyLow);
                     instrument.sampleGain = base64CharCodeToInt[compressed.charCodeAt(charIndex++)] / 10;
-                    // sampleRate is 2 base64 chars (sampleRate / 100)
+                    // sampleRate is 2 base64 chars (sampleRate / 50)
                     const srHigh = base64CharCodeToInt[compressed.charCodeAt(charIndex++)];
                     const srLow = base64CharCodeToInt[compressed.charCodeAt(charIndex++)];
-                    instrument.sampleSampleRate = (srHigh << 6 | srLow) * 100;
+                    instrument.sampleSampleRate = (srHigh << 6 | srLow) * 50;
                 }
             } break;
             case SongTagCode.fadeInOut: {
