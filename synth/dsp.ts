@@ -871,6 +871,9 @@ class EnvelopeComputer {
 
 }
 
+import { Voice, VoiceMode } from "./registries/VoiceTypes";
+export { Voice, VoiceMode } from "./registries/VoiceTypes";
+
 class Tone {
     public instrumentIndex: number;
     public readonly pitches: number[] = Array(Config.maxChordSize + 2).fill(0);
@@ -952,6 +955,9 @@ class Tone {
     public filterResonanceDelta: number = 0.0;
     public isFirstOrder: boolean = false;
 
+    /** Voices produced by the note router for this tone. Populated during computeTone. */
+    public voices: Voice[] | null = null;
+
     public readonly envelopeComputer: EnvelopeComputer = new EnvelopeComputer(/*true*/);
 
     constructor() {
@@ -991,6 +997,7 @@ class Tone {
         this.prevStringDecay = null;
         this.supersawPrevPhaseDelta = null;
         this.drumsetPitch = null;
+        this.voices = null;
     }
 }
 
@@ -1351,7 +1358,14 @@ class InstrumentState {
                 this.invertWave = Boolean(Math.floor(synth.getModValue(Config.modulators.dictionary["invert wave"].index, channelIndex, instrumentIndex, false)));
             }
         }
-        
+
+        // Extension onCompute lifecycle — allows extensions to set up per-instrument state.
+        for (const extension of instrument.extensions) {
+            if (extension.onCompute) {
+                extension.onCompute({ instrument, instrumentState: this, channelIndex, instrumentIndex });
+            }
+        }
+
         this.volumeScale = 1.0;
 
         this.allocateNecessaryBuffers(synth, instrument, samplesPerTick);
@@ -4467,12 +4481,51 @@ export class Synth {
         }
     }
 
+    /**
+     * Route a tone into one or more voices for rendering.
+     *
+     * The default implementation returns a single voice that uses the instrument's
+     * default synth function — preserving 100% of existing behavior. Future
+     * extensions (per-note sample triggers, layering, etc.) can override this
+     * via the note routing registry to produce multiple voices or replace the
+     * default synthesis on a per-note basis.
+     */
+    private _routeTone(tone: Tone, instrument: Instrument, instrumentState: InstrumentState): Voice[] {
+        const synth = instrumentState.synthesizer;
+        if (synth == null) return [];
+
+        // Default: single voice using the instrument's synth function.
+        let voices: Voice[] | null = [{ synthFunction: synth, tone: tone, mode: VoiceMode.Layer, gain: 1.0 }];
+
+        // Let each extension's routeNote modify the voice list.
+        // Extensions are called in order. Each receives the current voice list
+        // and can return a replacement (or null to keep the current list).
+        for (const extension of instrument.extensions) {
+            if (extension.routeNote) {
+                const result = extension.routeNote({ tone, instrument, instrumentState, defaultSynth: synth });
+                if (result !== null) {
+                    voices = result;
+                }
+            }
+        }
+
+        return voices != null ? voices : [];
+    }
 
     private playTone(channelIndex: number, bufferIndex: number, runLength: number, tone: Tone): void {
         const channelState: ChannelState = this.channels[channelIndex];
         const instrumentState: InstrumentState = channelState.instruments[tone.instrumentIndex];
 
-        if (instrumentState.synthesizer != null) instrumentState.synthesizer!(this, bufferIndex, runLength, tone, instrumentState);
+        // Note routing: if the tone has routed voices, render each one.
+        // Otherwise, fall back to the single instrumentState.synthesizer (default behavior).
+        const voices: Voice[] | null = tone.voices;
+        if (voices != null && voices.length > 0) {
+            for (const voice of voices) {
+                voice.synthFunction(this, bufferIndex, runLength, voice.tone, instrumentState);
+            }
+        } else if (instrumentState.synthesizer != null) {
+            instrumentState.synthesizer!(this, bufferIndex, runLength, tone, instrumentState);
+        }
         tone.envelopeComputer.clearEnvelopes();
         instrumentState.envelopeComputer.clearEnvelopes();
     }
@@ -5534,6 +5587,9 @@ export class Synth {
                 }
             }
         }
+
+        // Note routing: allow extensions to produce additional/replacement voices per note.
+        tone.voices = this._routeTone(tone, instrument, instrumentState);
     }
 
     public static getLFOAmplitude(instrument: Instrument, secondsIntoBar: number): number {

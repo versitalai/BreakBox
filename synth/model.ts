@@ -1341,9 +1341,12 @@ export class Instrument {
     public invalidModulators: boolean[] = [];
     public upperNoteLimit: number = Config.maxPitch;
     public lowerNoteLimit: number = 0;
-    
-    //Literally just for pitch envelopes. 
+
+    //Literally just for pitch envelopes.
     public isNoiseInstrument: boolean = false;
+
+    /** Plugged-in extensions for per-note behavior (note routing, sample keymaps, etc). */
+    public extensions: any[] = [];
     constructor(isNoiseChannel: boolean, isModChannel: boolean) {
 
         // @jummbus - My screed on how modulator arrays for instruments work, for the benefit of myself in the future, or whoever else.

@@ -25,3 +25,5 @@ import './instrumentTypes/fm6op';
 import './instrumentTypes/sampleTrigger';
 
 export { instrumentTypeRegistry, InstrumentTypeSpec, ApplyDefaultsFn } from './InstrumentTypeRegistry';
+export { instrumentExtensionRegistry, InstrumentExtension } from './InstrumentExtension';
+export { Voice, VoiceMode } from './VoiceTypes';
