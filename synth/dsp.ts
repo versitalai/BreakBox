@@ -872,6 +872,7 @@ class EnvelopeComputer {
 }
 
 import { Voice, VoiceMode } from "./registries/VoiceTypes";
+import { noteMapSynthSentinel } from "./registries/instrumentExtensions/noteMap";
 export { Voice, VoiceMode } from "./registries/VoiceTypes";
 
 // Pre-allocated singletons to avoid allocation in the synth hot path.
@@ -964,6 +965,18 @@ class Tone {
     /** Voices produced by the note router for this tone. Populated during computeTone. */
     public voices: Voice[] | null = null;
 
+    /** Per-note sample wave buffer. Set by noteMapSampleSynth consumers via routeNote. */
+    public noteWave: Float32Array | null = null;
+
+    /** Per-note sample root key. Set by noteMapSampleSynth consumers via routeNote. */
+    public noteSampleRootKey: number = 60;
+
+    /** Per-note sample gain. Set by noteMapSampleSynth consumers via routeNote. */
+    public noteSampleGain: number = 1.0;
+
+    /** Per-note sample sample rate. Set by noteMapSampleSynth consumers via routeNote. */
+    public noteSampleRate: number = 44100;
+
     public readonly envelopeComputer: EnvelopeComputer = new EnvelopeComputer(/*true*/);
 
     constructor() {
@@ -1004,6 +1017,10 @@ class Tone {
         this.supersawPrevPhaseDelta = null;
         this.drumsetPitch = null;
         this.voices = null;
+        this.noteWave = null;
+        this.noteSampleRootKey = 60;
+        this.noteSampleGain = 1.0;
+        this.noteSampleRate = 44100;
     }
 }
 
@@ -4524,6 +4541,16 @@ export class Synth {
             }
         }
 
+        // Resolve sentinel functions. Extensions that can't import Synth directly
+        // (circular dependency) use noteMapSynthSentinel as a placeholder.
+        if (voices) {
+            for (const voice of voices) {
+                if (voice.synthFunction === noteMapSynthSentinel) {
+                    voice.synthFunction = Synth.noteMapSampleSynth;
+                }
+            }
+        }
+
         return voices != null ? voices : _emptyVoiceArray;
     }
 
@@ -6323,6 +6350,76 @@ export class Synth {
             }
 
             // Linear interpolation for sample playback
+            const phaseRatio = phase - phaseInt;
+            const sample = wave[phaseInt] + (wave[phaseInt + 1] - wave[phaseInt]) * phaseRatio;
+
+            const filteredSample = applyFilters(sample * volumeScale, initialFilterInput1, initialFilterInput2, filterCount, filters);
+            initialFilterInput2 = initialFilterInput1;
+            initialFilterInput1 = sample * volumeScale;
+
+            const output = filteredSample * expression;
+            expression += expressionDelta;
+            data[sampleIndex] += output;
+
+            phase += phaseDelta;
+        }
+
+        // Store playback position for next tick
+        tone.phases[0] = phase / waveLength;
+        tone.expression = expression;
+        synth.sanitizeFilters(filters);
+        tone.initialNoteFilterInput1 = initialFilterInput1;
+        tone.initialNoteFilterInput2 = initialFilterInput2;
+    }
+
+    /**
+     * Synth function for per-note sample playback via the NoteMap extension.
+     * Reads sample data from the tone itself (tone.noteWave, tone.noteSampleRootKey, etc.)
+     * rather than from the instrument, allowing different samples per note.
+     */
+    public static noteMapSampleSynth(synth: Synth, bufferIndex: number, roundedSamplesPerTick: number, tone: Tone, instrumentState: InstrumentState): void {
+        const wave = tone.noteWave;
+        if (wave == null || wave.length === 0) return;
+
+        const data = synth.tempMonoInstrumentSampleBuffer;
+        if (data == null) return;
+
+        const volumeScale = instrumentState.volumeScale * tone.noteSampleGain;
+        const waveLength = wave.length - 1;
+        if (waveLength <= 0) return;
+
+        // Calculate pitch shift from the sample's root key to the played note
+        const semitoneOffset = tone.pitches[0] - tone.noteSampleRootKey;
+        const pitchMultiplier = Math.pow(2, semitoneOffset / 12);
+
+        // Phase increment per output sample, adjusted for sample rate
+        const sampleRate = tone.noteSampleRate || 44100;
+        const phaseDelta = pitchMultiplier * sampleRate / synth.samplesPerSecond;
+
+        let phase = 0.0;
+        // Reuse tone phases array for persistent playback position across ticks
+        if (tone.atNoteStart) {
+            phase = 0.0;
+            tone.phases[0] = 0.0;
+        } else {
+            phase = tone.phases[0] * waveLength;
+        }
+
+        const filters = tone.noteFilters;
+        const filterCount = tone.noteFilterCount | 0;
+        let initialFilterInput1 = +tone.initialNoteFilterInput1;
+        let initialFilterInput2 = +tone.initialNoteFilterInput2;
+        const applyFilters = Synth.applyFilters;
+
+        let expression = +tone.expression;
+        const expressionDelta = +tone.expressionDelta;
+
+        const stopIndex = bufferIndex + roundedSamplesPerTick;
+        for (let sampleIndex = bufferIndex; sampleIndex < stopIndex; sampleIndex++) {
+            const phaseInt = phase | 0;
+            if (phaseInt >= waveLength) break;
+
+            // Linear interpolation
             const phaseRatio = phase - phaseInt;
             const sample = wave[phaseInt] + (wave[phaseInt + 1] - wave[phaseInt]) * phaseRatio;
 

@@ -34,13 +34,18 @@ export interface NoteAction {
  * extension, and the note map data is serialized via this extension's
  * serialize/deserialize methods).
  */
+/**
+ * Sentinel function used by NoteMapExtension voices. The actual synth function
+ * is resolved by _routeTone() in dsp.ts which replaces this with Synth.noteMapSampleSynth.
+ * This avoids a circular import between noteMap.ts and dsp.ts.
+ */
+export function noteMapSynthSentinel(): void {
+    // This should never be called — _routeTone replaces it with the real function.
+    throw new Error("noteMapSynthSentinel called directly — _routeTone should have resolved it");
+}
+
 export const noteMapExtension: InstrumentExtension = {
     id: 'noteMap',
-
-    onCompute(_ctx: ComputeContext): void {
-        // No per-compute setup needed for the note map itself.
-        // Sample loading would happen here if we had async buffer management.
-    },
 
     routeNote(ctx: RouteNoteContext): Voice[] | null {
         const instrument = ctx.instrument;
@@ -51,24 +56,31 @@ export const noteMapExtension: InstrumentExtension = {
         if (!noteMap || !enabled) return null;
 
         // Get the note number from the tone's first pitch.
-        // tone.pitches[0] is the pitch in song-space; we need the actual note number.
         const tone = ctx.tone;
         const noteNumber = tone.note != null ? tone.note.pitches[0] : tone.pitches[0];
 
         const action = noteMap.get(noteNumber);
         if (!action) return null;
 
-        // Return a voice for the sample trigger.
-        // We use the sampleTriggerSynth function (same as the sample-trigger instrument type).
-        const synthFn = ctx.defaultSynth;
+        // Load the sample wave for this note (cached on the instrument).
+        const waveMap = (instrument as any)._noteWaveMap as Map<number, Float32Array> | null;
+        const wave = waveMap ? waveMap.get(noteNumber) : null;
 
+        // Set per-note sample data on the tone for the synth function to read.
+        if (wave) {
+            tone.noteWave = wave;
+            tone.noteSampleRootKey = action.rootKey;
+            tone.noteSampleGain = action.gain;
+            tone.noteSampleRate = 44100; // Default; could be stored per-sample if needed
+        } else {
+            // No sample loaded yet — skip this voice.
+            return null;
+        }
+
+        // Use the noteMapSynthId sentinel so _routeTone can resolve to Synth.noteMapSampleSynth.
         if (action.mode === VoiceMode.Replace) {
-            // Replace: only render the sample voice.
-            // We need the sampleTriggerSynth function, but we can't easily get it here
-            // without a circular import. Instead, we mark this voice with a special
-            // synthFunction that the DSP will resolve.
             return [{
-                synthFunction: synthFn, // Placeholder — see note below
+                synthFunction: noteMapSynthSentinel as any,
                 tone: ctx.tone,
                 mode: VoiceMode.Replace,
                 gain: action.gain,
@@ -78,13 +90,29 @@ export const noteMapExtension: InstrumentExtension = {
             return [
                 { synthFunction: ctx.defaultSynth, tone: ctx.tone, mode: VoiceMode.Layer, gain: 1.0 },
                 {
-                    synthFunction: synthFn, // Placeholder — see note below
+                    synthFunction: noteMapSynthSentinel as any,
                     tone: ctx.tone,
                     mode: VoiceMode.Layer,
                     gain: action.gain,
                 },
             ];
         }
+    },
+
+    onCompute(ctx: ComputeContext): void {
+        // Pre-load samples for all notes in the note map.
+        // In a real implementation, this would fetch and decode audio.
+        // For now, the wave map must be populated externally (e.g., by the editor).
+        const instrument = ctx.instrument;
+        const noteMap = (instrument as any)._noteMap as Map<number, NoteAction> | null;
+        if (!noteMap) return;
+
+        // Ensure wave map exists.
+        if (!(instrument as any)._noteWaveMap) {
+            (instrument as any)._noteWaveMap = new Map<number, Float32Array>();
+        }
+        // Actual sample loading happens externally — the editor or a sample cache
+        // populates _noteWaveMap. This hook just ensures the structure exists.
     },
 
     serialize(instrument: Instrument): number[] {

@@ -66,13 +66,18 @@ describe('NoteMap extension', () => {
 
         it('should return Replace voice for mapped note in Replace mode', () => {
             const instrument = new Instrument(false, false);
+            const dummyWave = new Float32Array([0, 0.5, 1, 0.5, 0, -0.5, -1, -0.5]);
             instrument._noteMap = new Map<number, NoteAction>([
                 [60, { mode: VoiceMode.Replace, sampleUrl: 'kick.wav', rootKey: 48, gain: 1.5 }],
             ]);
             instrument._noteMapEnabled = true;
+            (instrument as any)._noteWaveMap = new Map<number, Float32Array>([
+                [60, dummyWave],
+            ]);
 
+            const tone: any = { pitches: [60], note: null };
             const ctx = {
-                tone: { pitches: [60], note: null },
+                tone,
                 instrument,
                 instrumentState: { synthesizer: () => {} },
                 defaultSynth: () => {},
@@ -83,17 +88,26 @@ describe('NoteMap extension', () => {
             expect(result!.length).toBe(1);
             expect(result![0].mode).toBe(VoiceMode.Replace);
             expect(result![0].gain).toBe(1.5);
+            // Verify tone was populated with sample data
+            expect(tone.noteWave).toBe(dummyWave);
+            expect(tone.noteSampleRootKey).toBe(48);
+            expect(tone.noteSampleGain).toBe(1.5);
         });
 
         it('should return two voices for mapped note in Layer mode', () => {
             const instrument = new Instrument(false, false);
+            const dummyWave = new Float32Array([0, 0.5, 1, 0.5, 0, -0.5, -1, -0.5]);
             instrument._noteMap = new Map<number, NoteAction>([
                 [64, { mode: VoiceMode.Layer, sampleUrl: 'snare.wav', rootKey: 60, gain: 0.8 }],
             ]);
             instrument._noteMapEnabled = true;
+            (instrument as any)._noteWaveMap = new Map<number, Float32Array>([
+                [64, dummyWave],
+            ]);
 
+            const tone: any = { pitches: [64], note: null };
             const ctx = {
-                tone: { pitches: [64], note: null },
+                tone,
                 instrument,
                 instrumentState: { synthesizer: () => {} },
                 defaultSynth: () => {},
@@ -106,6 +120,29 @@ describe('NoteMap extension', () => {
             expect(result![0].gain).toBe(1.0);
             expect(result![1].mode).toBe(VoiceMode.Layer);
             expect(result![1].gain).toBe(0.8);
+            // Verify tone was populated with sample data
+            expect(tone.noteWave).toBe(dummyWave);
+            expect(tone.noteSampleRootKey).toBe(60);
+            expect(tone.noteSampleGain).toBe(0.8);
+        });
+
+        it('should return null when sample wave is not loaded', () => {
+            const instrument = new Instrument(false, false);
+            instrument._noteMap = new Map<number, NoteAction>([
+                [60, { mode: VoiceMode.Replace, sampleUrl: 'kick.wav', rootKey: 48, gain: 1.5 }],
+            ]);
+            instrument._noteMapEnabled = true;
+            // No _noteWaveMap — sample not loaded
+
+            const ctx = {
+                tone: { pitches: [60], note: null },
+                instrument,
+                instrumentState: { synthesizer: () => {} },
+                defaultSynth: () => {},
+            };
+
+            const result = noteMapExtension.routeNote!(ctx as any);
+            expect(result).toBeNull();
         });
     });
 
