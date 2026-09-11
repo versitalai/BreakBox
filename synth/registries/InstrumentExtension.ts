@@ -49,6 +49,13 @@ export interface InstrumentExtension {
     /** Unique identifier for this extension type. */
     readonly id: string;
 
+    /**
+     * Execution priority (higher = runs first). Extensions with the same
+     * priority run in registration order. Default: 0.
+     * Use negative values for "always last" extensions.
+     */
+    readonly priority?: number;
+
     /** Called once per synth render cycle, during instrumentState.compute(). */
     onCompute?: (ctx: ComputeContext) => void;
 
@@ -97,6 +104,13 @@ export class InstrumentExtensionRegistry {
 
     getAll(): InstrumentExtension[] {
         return Array.from(this.extensions.values());
+    }
+
+    /** Get all registered extension IDs in priority order (highest first). */
+    getOrderedIds(): string[] {
+        return Array.from(this.extensions.entries())
+            .sort((a, b) => (b[1].priority ?? 0) - (a[1].priority ?? 0))
+            .map(e => e[0]);
     }
 }
 

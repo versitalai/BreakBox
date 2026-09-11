@@ -5,6 +5,7 @@
 import { startLoadingSample, sampleLoadingState, SampleLoadingState, sampleLoadEvents, SampleLoadedEvent, SampleLoadingStatus, loadBuiltInSamples, Dictionary, DictionaryArray, toNameMap, FilterType, SustainType, EnvelopeType, InstrumentType, EffectType, Transition, Unison, Chord, Vibrato, Envelope, AutomationTarget, Config, getDrumWave, drawNoiseSpectrum, performIntegralOld, effectsIncludeTransition, effectsIncludeChord, effectsIncludePitchShift, effectsIncludeDetune, effectsIncludeVibrato, effectsIncludeNoteFilter, effectsIncludeDistortion, effectsIncludeBitcrusher, effectsIncludePanning, effectsIncludeChorus, effectsIncludeEcho, effectsIncludeReverb, effectsIncludeNoteRange, effectsIncludeRingModulation, effectsIncludeGranular, LFOEnvelopeTypes, RandomEnvelopeTypes, effectsIncludePhaser, effectsIncludeInvertWave } from "./SynthConfig";
 import { Preset, EditorConfig } from "../editor/core/EditorConfig";
 import { instrumentTypeRegistry } from "./registries/InstrumentTypeRegistry";
+import { instrumentExtensionRegistry } from "./registries/InstrumentExtension";
 import { scaleElementsByFactor, inverseRealFourierTransform } from "./FFT";
 import { FilterCoefficients, FrequencyResponse } from "./filtering";
 import { updateFromJukeBox3, updateFromJukeBox4, updateFromUltraBox } from "./PresetUpdates";
@@ -1431,6 +1432,40 @@ export class Instrument {
         //properly sets the isNoiseInstrument value
         this.isNoiseInstrument = isNoiseChannel;
 
+    }
+
+    // --- Extension helpers ---
+
+    /** Attach an extension instance to this instrument. */
+    attachExtension(extension: InstrumentExtensionLike): void {
+        const idx = this.extensions.findIndex((e: any) => e.id === extension.id);
+        if (idx >= 0) {
+            this.extensions[idx] = extension; // replace existing
+        } else {
+            this.extensions.push(extension);
+        }
+        // Keep sorted by priority (highest first)
+        this.extensions.sort((a: any, b: any) => (b.priority ?? 0) - (a.priority ?? 0));
+    }
+
+    /** Remove an extension by ID. Returns true if it was present. */
+    detachExtension(id: string): boolean {
+        const idx = this.extensions.findIndex((e: any) => e.id === id);
+        if (idx >= 0) {
+            this.extensions.splice(idx, 1);
+            return true;
+        }
+        return false;
+    }
+
+    /** Check if an extension is attached. */
+    hasExtension(id: string): boolean {
+        return this.extensions.some((e: any) => e.id === id);
+    }
+
+    /** Get an attached extension by ID. */
+    getExtension(id: string): InstrumentExtensionLike | undefined {
+        return this.extensions.find((e: any) => e.id === id);
     }
 
     public setTypeAndReset(type: InstrumentType, isNoiseChannel: boolean, isModChannel: boolean): void {
@@ -3764,6 +3799,32 @@ export class Song {
                     throw new Error("Unknown instrument type.");
                 }
 
+                // Extension serialization: each extension writes its data with a header.
+                // Format: [tag][extensionIdLen][extensionId...][dataLenHigh][dataLenLow][data...]
+                // Only written if at least one extension has data.
+                const extensionData: number[] = [];
+                for (const ext of instrument.extensions) {
+                    if (ext.serialize) {
+                        const data = ext.serialize(instrument);
+                        if (data.length > 0) {
+                            // Extension ID as single char (index into registry ordered list)
+                            const extIdx = instrumentExtensionRegistry.getOrderedIds().indexOf((ext as any).id);
+                            extensionData.push(extIdx >= 0 ? extIdx : 0);
+                            // Data length as 2 chars (max 4095)
+                            extensionData.push(Math.min(data.length, 4095) >> 6);
+                            extensionData.push(Math.min(data.length, 4095) & 0x3F);
+                            // Data bytes
+                            for (let i = 0; i < data.length && i < 4095; i++) {
+                                extensionData.push(data[i]);
+                            }
+                        }
+                    }
+                }
+                if (extensionData.length > 0) {
+                    buffer.push(SongTagCode.instrumentExtensions);
+                    buffer.push(...extensionData);
+                }
+
                 buffer.push(SongTagCode.envelopes, base64IntToCharCode[instrument.envelopeCount]);
                 // Added in JB v6: Options for envelopes come next.
                 buffer.push(base64IntToCharCode[instrument.envelopeSpeed]);
@@ -4849,6 +4910,46 @@ export class Song {
                     const srHigh = base64CharCodeToInt[compressed.charCodeAt(charIndex++)];
                     const srLow = base64CharCodeToInt[compressed.charCodeAt(charIndex++)];
                     instrument.sampleSampleRate = (srHigh << 6 | srLow) * 50;
+                }
+            } break;
+            case SongTagCode.instrumentExtensions: {
+                // Read extension data for the current instrument.
+                // Format: repeated [extIdx][dataLenHigh][dataLenLow][data...]
+                const instrument: Instrument = this.channels[instrumentChannelIterator].instruments[instrumentIndexIterator];
+                const orderedIds = instrumentExtensionRegistry.getOrderedIds();
+
+                // Read entries until we hit a non-base64 char (next tag) or end of data.
+                // We peek ahead: if the next char is a known non-extension tag, stop.
+                while (charIndex < compressed.length) {
+                    const nextCharCode = compressed.charCodeAt(charIndex);
+                    // Stop if this looks like a known tag (not a valid base64 index 0-63)
+                    if (nextCharCode === SongTagCode.fadeInOut ||
+                        nextCharCode === SongTagCode.envelopes ||
+                        nextCharCode === SongTagCode.volume ||
+                        nextCharCode === SongTagCode.startInstrument) {
+                        break;
+                    }
+
+                    const extIdx = base64CharCodeToInt[nextCharCode];
+                    charIndex++;
+                    const dataLen = (base64CharCodeToInt[compressed.charCodeAt(charIndex++)] << 6)
+                        | base64CharCodeToInt[compressed.charCodeAt(charIndex++)];
+
+                    if (dataLen === 0) break;
+
+                    const extId = orderedIds[extIdx];
+                    const ext = extId ? instrumentExtensionRegistry.get(extId) : undefined;
+
+                    if (ext && ext.deserialize) {
+                        const dataArray: number[] = [];
+                        for (let i = 0; i < dataLen && charIndex < compressed.length; i++) {
+                            dataArray.push(compressed.charCodeAt(charIndex++));
+                        }
+                        ext.deserialize(instrument, dataArray, 0);
+                    } else {
+                        // Unknown extension — skip its data
+                        charIndex += dataLen;
+                    }
                 }
             } break;
             case SongTagCode.fadeInOut: {

@@ -117,7 +117,7 @@ export const enum SongTagCode {
     harmonics = CharCode.H, // added in BeepBox URL version 7
     stringSustain = CharCode.I, // added in BeepBox URL version 9
     sampleData = CharCode.J, // added in BreakBox for sample-trigger instrument
-    //	                    = CharCode.K,
+    instrumentExtensions = CharCode.K, // added in BreakBox for per-instrument extension data
     pan = CharCode.L, // added between 8 and 9, DEPRECATED
     customChipWave = CharCode.M, // added in JummBox URL version 1(?) for customChipWave
     songTitle = CharCode.N, // added in JummBox URL version 1(?) for songTitle

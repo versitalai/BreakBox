@@ -179,3 +179,65 @@ describe('NoteMap extension', () => {
         });
     });
 });
+
+describe('Instrument extension helpers (Phase 4)', () => {
+    it('should attach an extension', () => {
+        const instrument = new Instrument(false, false);
+        const ext = { id: 'test1', priority: 0 };
+        instrument.attachExtension(ext as any);
+        expect(instrument.extensions.length).toBe(1);
+        expect(instrument.hasExtension('test1')).toBe(true);
+    });
+
+    it('should replace an existing extension with same id', () => {
+        const instrument = new Instrument(false, false);
+        instrument.attachExtension({ id: 'test1', priority: 0 } as any);
+        instrument.attachExtension({ id: 'test1', priority: 5 } as any);
+        expect(instrument.extensions.length).toBe(1);
+        expect((instrument.extensions[0] as any).priority).toBe(5);
+    });
+
+    it('should sort extensions by priority (highest first)', () => {
+        const instrument = new Instrument(false, false);
+        instrument.attachExtension({ id: 'low', priority: -10 } as any);
+        instrument.attachExtension({ id: 'high', priority: 10 } as any);
+        instrument.attachExtension({ id: 'mid', priority: 0 } as any);
+        expect((instrument.extensions[0] as any).id).toBe('high');
+        expect((instrument.extensions[1] as any).id).toBe('mid');
+        expect((instrument.extensions[2] as any).id).toBe('low');
+    });
+
+    it('should detach an extension by id', () => {
+        const instrument = new Instrument(false, false);
+        instrument.attachExtension({ id: 'test1' } as any);
+        instrument.attachExtension({ id: 'test2' } as any);
+        const removed = instrument.detachExtension('test1');
+        expect(removed).toBe(true);
+        expect(instrument.extensions.length).toBe(1);
+        expect(instrument.hasExtension('test1')).toBe(false);
+        expect(instrument.hasExtension('test2')).toBe(true);
+    });
+
+    it('should return false when detaching non-existent extension', () => {
+        const instrument = new Instrument(false, false);
+        const removed = instrument.detachExtension('nonexistent');
+        expect(removed).toBe(false);
+    });
+
+    it('should get an extension by id', () => {
+        const instrument = new Instrument(false, false);
+        const ext = { id: 'test1', priority: 5 };
+        instrument.attachExtension(ext as any);
+        const found = instrument.getExtension('test1');
+        expect(found).toBeDefined();
+        expect((found as any).priority).toBe(5);
+    });
+});
+
+describe('ExtensionRegistry ordering (Phase 4)', () => {
+    it('should return ordered IDs by priority', () => {
+        // noteMap extension is registered with default priority (0)
+        const ids = instrumentExtensionRegistry.getOrderedIds();
+        expect(ids).toContain('noteMap');
+    });
+});
