@@ -1363,6 +1363,12 @@ export class Instrument {
 
     /** Plugged-in extensions for per-note behavior (note routing, sample keymaps, etc). */
     public extensions: InstrumentExtensionLike[] = [];
+
+    /** Per-note sample trigger map. Populated by the noteMap extension. */
+    public _noteMap: Map<number, any> | null = null;
+
+    /** Whether the note map is active for this instrument. */
+    public _noteMapEnabled: boolean = false;
     constructor(isNoiseChannel: boolean, isModChannel: boolean) {
 
         // @jummbus - My screed on how modulator arrays for instruments work, for the benefit of myself in the future, or whoever else.
