@@ -163,6 +163,8 @@ export const noteMapExtension: InstrumentExtension = {
 
         (instrument as any)._noteMap = noteMap;
         (instrument as any)._noteMapEnabled = entryCount > 0;
+        // Clear wave cache — samples must be reloaded externally after deserialization.
+        (instrument as any)._noteWaveMap = new Map<number, Float32Array>();
         return index;
     },
 };

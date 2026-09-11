@@ -144,6 +144,44 @@ describe('NoteMap extension', () => {
             const result = noteMapExtension.routeNote!(ctx as any);
             expect(result).toBeNull();
         });
+
+        it('should return null when _noteWaveMap exists but note not in it', () => {
+            const instrument = new Instrument(false, false);
+            instrument._noteMap = new Map<number, NoteAction>([
+                [60, { mode: VoiceMode.Replace, sampleUrl: 'kick.wav', rootKey: 48, gain: 1.5 }],
+            ]);
+            instrument._noteMapEnabled = true;
+            // Wave map exists but only has note 64, not 60
+            (instrument as any)._noteWaveMap = new Map<number, Float32Array>([
+                [64, new Float32Array([0, 1, 0, -1])],
+            ]);
+
+            const ctx = {
+                tone: { pitches: [60], note: null },
+                instrument,
+                instrumentState: { synthesizer: () => {} },
+                defaultSynth: () => {},
+            };
+
+            const result = noteMapExtension.routeNote!(ctx as any);
+            expect(result).toBeNull();
+        });
+
+        it('should set noteSampleRate to 44100 by default', () => {
+            const instrument = new Instrument(false, false);
+            const dummyWave = new Float32Array([0, 1, 0, -1]);
+            instrument._noteMap = new Map<number, NoteAction>([
+                [60, { mode: VoiceMode.Replace, sampleUrl: 'kick.wav', rootKey: 48, gain: 1.0 }],
+            ]);
+            instrument._noteMapEnabled = true;
+            (instrument as any)._noteWaveMap = new Map<number, Float32Array>([
+                [60, dummyWave],
+            ]);
+
+            const tone: any = { pitches: [60], note: null };
+            noteMapExtension.routeNote!({ tone, instrument, instrumentState: {}, defaultSynth: () => {} } as any);
+            expect(tone.noteSampleRate).toBe(44100);
+        });
     });
 
     describe('serialize/deserialize', () => {
@@ -213,6 +251,46 @@ describe('NoteMap extension', () => {
             noteMapExtension.deserialize!(instrument2, data, 0);
 
             expect(instrument2._noteMapEnabled).toBe(true);
+        });
+
+        it('should not serialize _noteWaveMap data', () => {
+            const instrument = new Instrument(false, false);
+            instrument._noteMap = new Map<number, NoteAction>([
+                [60, { mode: VoiceMode.Replace, sampleUrl: 'kick.wav', rootKey: 48, gain: 1.5 }],
+            ]);
+            // Populate wave map with dummy data
+            (instrument as any)._noteWaveMap = new Map<number, Float32Array>([
+                [60, new Float32Array(1000)], // Large buffer
+            ]);
+
+            const data = noteMapExtension.serialize!(instrument);
+            // Serialized data should be small (just note map metadata, not wave buffer)
+            // 1 (count) + 1 (note) + 1 (mode) + 1 (rootKey) + 1 (gain) + 1 (urlLen) + 8 (url) = 14
+            expect(data.length).toBeLessThan(50);
+            expect(data.length).toBeGreaterThan(0);
+        });
+
+        it('should clear _noteWaveMap on deserialize', () => {
+            const instrument = new Instrument(false, false);
+            instrument._noteMap = new Map<number, NoteAction>([
+                [60, { mode: VoiceMode.Replace, sampleUrl: 'kick.wav', rootKey: 48, gain: 1.5 }],
+            ]);
+
+            const data = noteMapExtension.serialize!(instrument);
+
+            const instrument2 = new Instrument(false, false);
+            // Pre-populate with stale wave data
+            (instrument2 as any)._noteWaveMap = new Map<number, Float32Array>([
+                [60, new Float32Array([0, 1, 0, -1])],
+                [64, new Float32Array([0, 0.5, 1])],
+            ]);
+
+            noteMapExtension.deserialize!(instrument2, data, 0);
+
+            // Wave map should be cleared (fresh empty map)
+            const waveMap = (instrument2 as any)._noteWaveMap as Map<number, Float32Array>;
+            expect(waveMap).toBeDefined();
+            expect(waveMap.size).toBe(0);
         });
     });
 });
