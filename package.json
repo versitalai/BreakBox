@@ -26,6 +26,7 @@
 		"build-offline-html": "bash ./scripts/compile_beepbox_offline_html.sh",
 		"deploy-files": "bash ./scripts/deploy_files.sh",
 		"deploy": "node scripts/build.cjs --deploy",
+		"verify:pages": "node scripts/verify-deployment.cjs",
 		"verify": "npm run test -- --runInBand && node scripts/build.cjs",
 		"serve": "node scripts/serve.cjs",
 		"build-list": "node scripts/build.cjs --list",

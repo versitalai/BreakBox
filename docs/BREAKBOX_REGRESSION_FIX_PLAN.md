@@ -77,7 +77,7 @@ All of the following were confirmed after the fixes:
 
 ## 5. Optional follow-ups
 
-### 5.1 Automated regression coverage — in progress
+### 5.1 Automated regression coverage — done
 
 - Added `tests/editorRegression.test.ts` to protect the two exact root causes:
   - Pattern-editor mouse presses retain the same `ChangeSequence` as the pending drag change.
@@ -85,16 +85,21 @@ All of the following were confirmed after the fixes:
 - Added a jsdom-compatible test mock for the editor's ESM-only DOM helper so editor-state tests can execute in the existing Jest suite.
 - Future expansion: retain the browser-level add-note → remove-note → Play → Pause smoke path as release verification, because DOM state tests alone cannot prove real browser bundles mount.
 
-### 5.2 Cross-platform build ergonomics — in progress
+### 5.2 Cross-platform build ergonomics — done
 
 - Added `verify`: one Node/npm entrypoint that runs the full Jest suite and rebuilds every browser target without mutating deploy-root copies.
 - Added `serve`: a Node/Express local preview of the repository root, matching the GitHub Pages layout without requiring Python or a Bash helper.
 - Rewrote the compile section of `README.md` around the supported cross-platform workflow and made the distinction between ordinary builds and Pages deployment explicit.
 
-### 5.3 Other future work
+### 5.3 GitHub Pages artifact hygiene — done
+
+- Added `verify:pages`, which verifies that every manifest-listed Pages artifact exists at both canonical `website/` and deployment-root locations and has identical contents.
+- Corrected `404.html` references that still pointed to the retired Slarmoo's Box deployment; it now loads local icons, manifest, and synth bundle from the active Pages project scope.
+- The audit confirmed root/`website/` duplication is intentional: `website/` is the canonical build output and root copies are the GitHub Pages publication set. Do not remove one side without changing Pages’ publication layout.
+
+### 5.4 Other future work
 
 - Finish AudioWorklet renderer to feature parity if a worklet-native render path is desired later.
-- Clean up any stale standalone minified build artifacts if they are no longer needed.
 - Review project-wide difficulty/maintenance issues separately if the user wants that.
 
 ## 6. What is done for now
