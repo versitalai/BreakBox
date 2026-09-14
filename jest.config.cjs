@@ -16,6 +16,9 @@ module.exports = {
         }],
     },
     moduleNameMapper: {
+        // The editor's DOM helper ships only an ESM entrypoint; map it to a
+        // small jsdom-compatible factory so editor-state tests can run in Jest.
+        '^imperative-html/dist/esm/elements-strict$': '<rootDir>/tests/mocks/imperative-html.cjs',
         // Mock browser-only modules that break Node.js tests
         '\\.(css|less|scss)$': 'identity-obj-proxy',
     },
