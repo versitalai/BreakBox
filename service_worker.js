@@ -1,14 +1,18 @@
 
-const cacheName = "Slarmoo's Box";
+const cacheName = "BreakBox-v2";
 
 self.addEventListener("install", function(event) {
 	event.waitUntil(
 		caches.open(cacheName).then(function(cache) {
 			return cache.addAll([
-				"/website/",
-				"/website/beepbox_editor.min.js",
-				"/website/player/",
-				"/website/player/beepbox_player.min.js",
+				"./",
+				"./beepbox_editor.min.js",
+				"./breakbox-processor.js",
+				"./manifest.webmanifest",
+				"./website/",
+				"./website/beepbox_editor.min.js",
+				"./website/player/",
+				"./website/player/beepbox_player.min.js",
 				// "/2_4/",
 				// "/2_4/beepbox_editor.min.js",
 				// "/2_4/player/",
@@ -16,21 +20,27 @@ self.addEventListener("install", function(event) {
 				//"/2_3/",
 				//"/2_3/beepbox_editor.min.js",
 				"https://cdn.jsdelivr.net/npm/lamejs@1.2.0/lame.min.js",
-				"/website/samples.js",
-				"/website/samples2.js",
-				"/website/samples3.js",
-				"/website/drumsamples.js",
-				"/website/kirby_samples.js",
-				"/website/wario_samples.js",
-				"/website/mario_paintbox_samples.js",
-				"/website/nintaribox_samples.js",
+				"./website/samples.js",
+				"./website/samples2.js",
+				"./website/samples3.js",
+				"./website/drumsamples.js",
+				"./website/kirby_samples.js",
+				"./website/wario_samples.js",
+				"./website/mario_paintbox_samples.js",
+				"./website/nintaribox_samples.js",
 			]).then(() => self.skipWaiting());
 		})
 	);
 });
 
 self.addEventListener("activate", function(event) {
-	event.waitUntil(self.clients.claim());
+	event.waitUntil(
+		caches.keys().then(function(keys) {
+			return Promise.all(keys
+				.filter(function(key) { return key !== cacheName; })
+				.map(function(key) { return caches.delete(key); }));
+		}).then(function() { return self.clients.claim(); })
+	);
 });
 
 self.addEventListener("fetch", function(event) {

@@ -2075,8 +2075,11 @@ var beepbox = (function (exports) {
             return null;
         }
         static instrumentToPreset(instrument) {
-            var _a;
-            return (_a = EditorConfig.presetCategories[0].presets.dictionary) === null || _a === void 0 ? void 0 : _a[TypePresets === null || TypePresets === void 0 ? void 0 : TypePresets[instrument]];
+            for (const preset of EditorConfig.presetCategories[0].presets) {
+                if (preset.customType === instrument)
+                    return preset;
+            }
+            return null;
         }
     }
     EditorConfig.version = "1.0.0 Beta 2";
@@ -2099,6 +2102,7 @@ var beepbox = (function (exports) {
                 { id: 8, name: TypePresets[8], customType: 8 },
                 { id: 9, name: TypePresets[9], customType: 9 },
                 { id: 10, name: TypePresets[11], customType: 11 },
+                { id: 12, name: TypePresets[12], customType: 12 },
             ])
         },
         {

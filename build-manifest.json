@@ -109,6 +109,7 @@
       "name": "EditorConfig",
       "tsconfig": "tsconfig_editor.json",
       "entry": "editor/core/EditorConfig.ts",
+      "compiledEntry": "build/editor/core/EditorConfig.js",
       "outputDir": "build/editor",
       "rollup": {
         "outputFile": "website/manual/EditorConfig.js",

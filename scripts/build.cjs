@@ -97,8 +97,10 @@ function buildTarget(name) {
     // Step 3: Rollup bundling
     if (target.rollup) {
         const r = target.rollup;
-        const buildOutput = path.join(ROOT, 'build', name,
-            path.basename(target.entry).replace('.ts', '.js'));
+        const buildOutput = target.compiledEntry
+            ? path.join(ROOT, target.compiledEntry)
+            : path.join(ROOT, 'build', name,
+                path.basename(target.entry).replace('.ts', '.js'));
 
         let rollupCmd = 'npx rollup ' + path.relative(ROOT, buildOutput);
         rollupCmd += ' --file ' + r.outputFile;
@@ -120,7 +122,7 @@ function buildTarget(name) {
         let terserCmd = 'npx terser ' + t.input;
 
         if (t.sourceMap) {
-            terserCmd += ' --source-map \'content=./' + t.sourceMap.content + ',url=' + t.sourceMap.url + '\'';
+            terserCmd += ' --source-map "content=\'' + t.sourceMap.content + '\',url=\'' + t.sourceMap.url + '\'"';
         }
 
         terserCmd += ' -o ' + t.outputFile;
