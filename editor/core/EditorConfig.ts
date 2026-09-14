@@ -72,6 +72,7 @@ export class EditorConfig {
                 { id:8, name: TypePresets[InstrumentType.supersaw], customType: InstrumentType.supersaw },
                 { id:9, name: TypePresets[InstrumentType.customChipWave], customType: InstrumentType.customChipWave },
                 { id:10, name: TypePresets[InstrumentType.fm6op], customType: InstrumentType.fm6op },
+                { id:12, name: TypePresets[InstrumentType.sampleTrigger], customType: InstrumentType.sampleTrigger },
             ])
         },
         {
@@ -3103,7 +3104,10 @@ export class EditorConfig {
     }
 
     public static instrumentToPreset(instrument: InstrumentType): Preset | null {
-        return EditorConfig.presetCategories[0].presets.dictionary?.[TypePresets?.[instrument]];
+        for (const preset of EditorConfig.presetCategories[0].presets) {
+            if (preset.customType === instrument) return preset;
+        }
+        return null;
     }
 
 

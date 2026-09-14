@@ -1530,8 +1530,9 @@ export class SongEditor {
         window.requestAnimationFrame(this.updatePlayButton);
         window.requestAnimationFrame(this._animate);
 
-        if (!("share" in navigator)) {
-            this._fileMenu.removeChild(this._fileMenu.querySelector("[value='shareUrl']")!);
+        const shareUrlItem = this._fileMenu.querySelector("[value='shareUrl']");
+        if (!("share" in navigator) && shareUrlItem != null) {
+            this._fileMenu.removeChild(shareUrlItem);
         }
 
         this._scaleSelect.appendChild(optgroup({ label: "Edit" },

@@ -29,14 +29,23 @@ export class PresetRegistry {
     private _frozen: boolean = false;
 
     /**
-     * Register a preset category. Throws if a category with the same name exists.
+     * Register a preset category. Static editor data may use the same display
+     * name for pitched and drum collections, so duplicate names are merged.
      */
     addCategory(category: PresetCategory): void {
         if (this._frozen) throw new Error("PresetRegistry is frozen");
-        if (this._categories.has(category.name)) {
-            throw new Error("Preset category already registered: " + category.name);
+        const existingCategory = this._categories.get(category.name);
+        if (existingCategory == undefined) {
+            // Keep the registry independent from EditorConfig's static data.
+            this._categories.set(category.name, {
+                ...category,
+                presets: toNameMap([...category.presets]),
+            });
+        } else {
+            for (const preset of category.presets) {
+                (existingCategory.presets as Preset[]).push(preset);
+            }
         }
-        this._categories.set(category.name, category);
         for (const preset of category.presets) {
             this._indexPreset(preset);
         }

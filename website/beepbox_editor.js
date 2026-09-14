@@ -2015,8 +2015,11 @@ var beepbox = (function (exports) {
             return null;
         }
         static instrumentToPreset(instrument) {
-            var _a;
-            return (_a = EditorConfig.presetCategories[0].presets.dictionary) === null || _a === void 0 ? void 0 : _a[TypePresets === null || TypePresets === void 0 ? void 0 : TypePresets[instrument]];
+            for (const preset of EditorConfig.presetCategories[0].presets) {
+                if (preset.customType === instrument)
+                    return preset;
+            }
+            return null;
         }
     }
     EditorConfig.version = "1.0.0 Beta 2";
@@ -2039,6 +2042,7 @@ var beepbox = (function (exports) {
                 { id: 8, name: TypePresets[8], customType: 8 },
                 { id: 9, name: TypePresets[9], customType: 9 },
                 { id: 10, name: TypePresets[11], customType: 11 },
+                { id: 12, name: TypePresets[12], customType: 12 },
             ])
         },
         {
@@ -56470,8 +56474,9 @@ You should be redirected to the song at:<br /><br />
             window.addEventListener("resize", this.whenUpdated);
             window.requestAnimationFrame(this.updatePlayButton);
             window.requestAnimationFrame(this._animate);
-            if (!("share" in navigator)) {
-                this._fileMenu.removeChild(this._fileMenu.querySelector("[value='shareUrl']"));
+            const shareUrlItem = this._fileMenu.querySelector("[value='shareUrl']");
+            if (!("share" in navigator) && shareUrlItem != null) {
+                this._fileMenu.removeChild(shareUrlItem);
             }
             this._scaleSelect.appendChild(optgroup({ label: "Edit" }, option({ value: "forceScale" }, "Snap Notes To Scale"), option({ value: "customize" }, "Edit Custom Scale")));
             this._keySelect.appendChild(optgroup({ label: "Edit" }, option({ value: "detectKey" }, "Detect Key")));
@@ -57461,10 +57466,15 @@ You should be redirected to the song at:<br /><br />
         addCategory(category) {
             if (this._frozen)
                 throw new Error("PresetRegistry is frozen");
-            if (this._categories.has(category.name)) {
-                throw new Error("Preset category already registered: " + category.name);
+            const existingCategory = this._categories.get(category.name);
+            if (existingCategory == undefined) {
+                this._categories.set(category.name, Object.assign(Object.assign({}, category), { presets: toNameMap([...category.presets]) }));
             }
-            this._categories.set(category.name, category);
+            else {
+                for (const preset of category.presets) {
+                    existingCategory.presets.push(preset);
+                }
+            }
             for (const preset of category.presets) {
                 this._indexPreset(preset);
             }
