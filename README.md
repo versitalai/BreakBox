@@ -15,33 +15,28 @@ song!
 Slarmoo's Box, as well as the beepmods which it's based on, are free projects. If you ever feel so inclined, please support the original creator, [John Nesky](http://www.johnnesky.com/), via
 [PayPal](https://www.paypal.com/cgi-bin/webscr?cmd=_donations&business=QZJTX9GRYEV9N&currency_code=USD)!
 
-## Compiling
+## Compiling and previewing
 
-The compilation procedure is identical to the repository for BeepBox. I will include the excerpt on compiling from that page's readme below for convenience:
+BreakBox uses Node.js and npm. The primary build tooling is written in Node, so the normal editor workflow is the same on Windows and Linux—no Git Bash or platform-specific helper scripts required.
 
-The source code is available under the MIT license. The code is written in
-[TypeScript](https://www.typescriptlang.org/), which requires
-[node & npm](https://www.npmjs.com/get-npm), so install those first. Then to
-build this project, open a command line ([Git Bash](https://gitforwindows.org/)) and run:
+After cloning the repository and installing dependencies:
 
 ```
-git clone https://github.com/slarmoo/slarmoosbox.git
-cd slarmoosbox
 npm install
-npm run build
+npm run verify
+npm run serve
 ```
 
-JummBox (and by extension, Slarmoo's Box) makes a divergence from BeepBox that necessitates an additional dependency:
-rather than using the (rather poor) default HTML select implementation, the custom
-library [select2](https://select2.org) is employed. select2 has an explicit dependency
-on [jQuery](https://jquery.com) as well, so you may need to install the following
-additional dependencies if they are not picked up automatically.
+- `verify` runs the complete Jest suite and rebuilds every browser bundle without changing the repository-root deployment copies.
+- `serve` previews the repository root at `http://127.0.0.1:8080/`, matching GitHub Pages’ layout.
+- `deploy` rebuilds all targets **and** syncs the generated public files from `website/` into the repository root. Use it only when preparing a Pages deployment.
 
-```
-npm install select2
-npm install @types/select2
-npm install @types/jquery
-```
+Targeted builds remain available when iterating on one area:
+
+- `build-synth`
+- `build-editor`
+- `build-player`
+- `build-website`
 
 ## Code
 

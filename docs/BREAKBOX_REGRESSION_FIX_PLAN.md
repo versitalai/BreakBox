@@ -85,11 +85,16 @@ All of the following were confirmed after the fixes:
 - Added a jsdom-compatible test mock for the editor's ESM-only DOM helper so editor-state tests can execute in the existing Jest suite.
 - Future expansion: retain the browser-level add-note → remove-note → Play → Pause smoke path as release verification, because DOM state tests alone cannot prove real browser bundles mount.
 
-### 5.2 Other future work
+### 5.2 Cross-platform build ergonomics — in progress
+
+- Added `verify`: one Node/npm entrypoint that runs the full Jest suite and rebuilds every browser target without mutating deploy-root copies.
+- Added `serve`: a Node/Express local preview of the repository root, matching the GitHub Pages layout without requiring Python or a Bash helper.
+- Rewrote the compile section of `README.md` around the supported cross-platform workflow and made the distinction between ordinary builds and Pages deployment explicit.
+
+### 5.3 Other future work
 
 - Finish AudioWorklet renderer to feature parity if a worklet-native render path is desired later.
 - Clean up any stale standalone minified build artifacts if they are no longer needed.
-- Improve build ergonomics for Windows/Linux if desired.
 - Review project-wide difficulty/maintenance issues separately if the user wants that.
 
 ## 6. What is done for now

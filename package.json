@@ -26,6 +26,8 @@
 		"build-offline-html": "bash ./scripts/compile_beepbox_offline_html.sh",
 		"deploy-files": "bash ./scripts/deploy_files.sh",
 		"deploy": "node scripts/build.cjs --deploy",
+		"verify": "npm run test -- --runInBand && node scripts/build.cjs",
+		"serve": "node scripts/serve.cjs",
 		"build-list": "node scripts/build.cjs --list",
 		"start": "electron ./to_deploy",
 		"package": "electron-packager ./to_deploy --platform=darwin,linux,win32 --arch=ia32,x64 --asar --overwrite && npm run build-offline-html",
