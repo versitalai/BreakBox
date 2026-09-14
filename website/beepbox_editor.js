@@ -22,7 +22,7 @@ var beepbox = (function (exports) {
     OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
     SOFTWARE.
     */
-    var __awaiter$4 = (exports && exports.__awaiter) || function (thisArg, _arguments, P, generator) {
+    var __awaiter$2 = (exports && exports.__awaiter) || function (thisArg, _arguments, P, generator) {
         function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
         return new (P || (P = Promise))(function (resolve, reject) {
             function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
@@ -63,7 +63,7 @@ var beepbox = (function (exports) {
     }
     const sampleLoadEvents = new SampleLoadEvents();
     function startLoadingSample(url, chipWaveIndex, presetSettings, rawLoopOptions, customSampleRate) {
-        return __awaiter$4(this, void 0, void 0, function* () {
+        return __awaiter$2(this, void 0, void 0, function* () {
             const sampleLoaderAudioContext = new AudioContext({ sampleRate: customSampleRate });
             let closedSampleLoaderAudioContext = false;
             const chipWave = Config.chipWaves[chipWaveIndex];
@@ -38020,212 +38020,6 @@ li.select2-results__option[role=group] > strong:hover {
         }
     }
 
-    var __awaiter$3 = (exports && exports.__awaiter) || function (thisArg, _arguments, P, generator) {
-        function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
-        return new (P || (P = Promise))(function (resolve, reject) {
-            function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
-            function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
-            function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
-            step((generator = generator.apply(thisArg, _arguments || [])).next());
-        });
-    };
-    class BreakBoxAudioEngine {
-        constructor(workletModulePath) {
-            this.audioContext = null;
-            this.workletNode = null;
-            this.song = null;
-            this.initialized = false;
-            this.sampleRate = 44100;
-            this.lookaheadMs = 30;
-            this.schedulerTimer = null;
-            this.scheduledCommands = [];
-            this.workletModulePath = 'breakbox-processor.js';
-            if (workletModulePath != undefined) {
-                this.workletModulePath = workletModulePath;
-            }
-        }
-        init() {
-            return __awaiter$3(this, void 0, void 0, function* () {
-                if (this.initialized)
-                    return;
-                this.audioContext = new AudioContext({ latencyHint: 'interactive' });
-                this.sampleRate = this.audioContext.sampleRate;
-                yield this.audioContext.audioWorklet.addModule(this.workletModulePath);
-                this.workletNode = new AudioWorkletNode(this.audioContext, 'breakbox-processor', {
-                    numberOfInputs: 0,
-                    numberOfOutputs: 1,
-                    outputChannelCount: [2],
-                    processorOptions: { sampleRate: this.sampleRate }
-                });
-                this.workletNode.port.onmessage = (e) => this.handleWorkletMessage(e.data);
-                this.workletNode.connect(this.audioContext.destination);
-                this.sendCommand('init', { sampleRate: this.sampleRate, songData: {} });
-                this.initialized = true;
-            });
-        }
-        setSong(song) {
-            this.song = song;
-            this.sendCommand('init', {
-                sampleRate: this.sampleRate,
-                songData: this.serializeSongForWorklet(this.song)
-            });
-        }
-        play() {
-            this.sendCommand('play', {});
-            if (this.audioContext && this.audioContext.state === 'suspended') {
-                this.audioContext.resume();
-            }
-            this.startScheduler();
-        }
-        pause() {
-            this.sendCommand('pause', {});
-            this.stopScheduler();
-        }
-        stop() {
-            this.sendCommand('stop', {});
-            this.stopScheduler();
-        }
-        seek(tick) {
-            this.sendCommand('seek', { tick });
-        }
-        loadSample(key, buffer) {
-            this.sendCommand('load_sample', {
-                key,
-                buffer,
-                sampleRate: this.sampleRate,
-                rootKey: 60,
-                loop: undefined
-            }, [buffer]);
-        }
-        sendCommand(type, payload, transferables = []) {
-            if (!this.workletNode) {
-                console.warn('Worklet not initialized, queueing command:', type);
-                return;
-            }
-            this.workletNode.port.postMessage({ type, payload }, transferables);
-        }
-        handleWorkletMessage(msg) {
-            const { type, payload } = msg;
-            switch (type) {
-                case 'playhead':
-                    if (this.onTick)
-                        this.onTick(payload.tick);
-                    break;
-                case 'sample_loaded':
-                    console.log('Sample loaded in worklet:', payload.key);
-                    break;
-                case 'mod_values':
-                    break;
-                case 'error':
-                    console.error('Worklet error:', payload);
-                    break;
-            }
-        }
-        serializeSongForWorklet(song) {
-            return {
-                tempo: song.tempo,
-                beatsPerBar: song.beatsPerBar,
-                barCount: song.barCount,
-                loopStart: song.loopStart,
-                loopLength: song.loopLength,
-                channels: song.channels.map(ch => ({
-                    muted: ch.muted,
-                    instruments: ch.instruments.map(inst => this.serializeInstrument(inst))
-                }))
-            };
-        }
-        serializeInstrument(inst) {
-            return {
-                type: inst.type,
-                volume: inst.volume,
-                pan: inst.pan,
-            };
-        }
-        startScheduler() {
-            if (this.schedulerTimer)
-                return;
-            const schedule = () => {
-                if (!this.workletNode || !this.song)
-                    return;
-                const currentTick = this.estimateCurrentTick();
-                const lookaheadTicks = (this.lookaheadMs / 1000) * this.getTicksPerSecond();
-                while (this.scheduledCommands.length > 0 &&
-                    this.scheduledCommands[0].tick <= currentTick + lookaheadTicks) {
-                    const { cmd } = this.scheduledCommands.shift();
-                    this.sendCommandToWorklet(cmd);
-                }
-                this.schedulerTimer = window.setTimeout(schedule, 5);
-            };
-            schedule();
-        }
-        stopScheduler() {
-            if (this.schedulerTimer) {
-                clearTimeout(this.schedulerTimer);
-                this.schedulerTimer = null;
-            }
-        }
-        estimateCurrentTick() {
-            if (!this.audioContext)
-                return 0;
-            const elapsed = this.audioContext.currentTime * this.getTicksPerSecond();
-            return elapsed;
-        }
-        getTicksPerSecond() {
-            if (!this.song)
-                return 480;
-            return (this.song.tempo / 60) * 4;
-        }
-        sendCommandToWorklet(cmd) {
-            const payload = { tick: cmd.tick };
-            switch (cmd.type) {
-                case 'note_on':
-                    payload.type = 'note_on';
-                    payload.voice = cmd.voice;
-                    break;
-                case 'note_off':
-                    payload.type = 'note_off';
-                    payload.voice = cmd.voice;
-                    break;
-                case 'update_fx':
-                    payload.type = 'update_fx';
-                    payload.fx = cmd.fx;
-                    break;
-            }
-            this.sendCommand(cmd.type, payload);
-        }
-        scheduleNoteOn(voice, tick) {
-            const cmd = { type: 'note_on', tick, voice };
-            this.scheduledCommands.push({ tick, cmd });
-            this.scheduledCommands.sort((a, b) => a.tick - b.tick);
-        }
-        scheduleNoteOff(pitch, channel, instrument, tick) {
-            const voice = { pitch, start: 0, end: 0, velocity: 0, probability: 1, rollCount: 1, sampleKey: null, transpose: 0, reverse: false };
-            const cmd = { type: 'note_off', tick, voice };
-            this.scheduledCommands.push({ tick, cmd });
-            this.scheduledCommands.sort((a, b) => a.tick - b.tick);
-        }
-        scheduleFxUpdate(pitch, channel, instrument, fx, tick) {
-            const cmd = { type: 'update_fx', tick, voice: { pitch, start: 0, end: 0, velocity: 0, probability: 1, rollCount: 1, sampleKey: null, transpose: 0, reverse: false }, fx };
-            this.scheduledCommands.push({ tick, cmd });
-            this.scheduledCommands.sort((a, b) => a.tick - b.tick);
-        }
-        setMasterVolume(volume) {
-            this.sendCommand('set_master', { volume, limiterEnabled: true });
-        }
-        dispose() {
-            this.stopScheduler();
-            if (this.workletNode) {
-                this.workletNode.disconnect();
-                this.workletNode = null;
-            }
-            if (this.audioContext) {
-                this.audioContext.close();
-                this.audioContext = null;
-            }
-            this.initialized = false;
-        }
-    }
-
     class LegacySynthAdapter {
         constructor(inner) {
             this.inner = inner;
@@ -38237,109 +38031,6 @@ li.select2-results__option[role=group] > strong:hover {
         stop() { this.inner.pause(); this.inner.goToBar(0); }
         seek(tick) { this.inner.goToBar(tick); }
         loadSample(_key, _buffer) {
-        }
-    }
-
-    var __awaiter$2 = (exports && exports.__awaiter) || function (thisArg, _arguments, P, generator) {
-        function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
-        return new (P || (P = Promise))(function (resolve, reject) {
-            function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
-            function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
-            function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
-            step((generator = generator.apply(thisArg, _arguments || [])).next());
-        });
-    };
-    class WorkletSynthAdapter {
-        constructor() {
-            this.engine = null;
-            this.fallback = null;
-            this.useWorklet = false;
-            this.useWorklet = this.supportsAudioWorklet();
-        }
-        supportsAudioWorklet() {
-            return typeof AudioContext !== 'undefined' &&
-                typeof AudioWorkletNode !== 'undefined' &&
-                'audioWorklet' in AudioContext.prototype;
-        }
-        init() {
-            return __awaiter$2(this, void 0, void 0, function* () {
-                if (this.useWorklet) {
-                    try {
-                        this.engine = new BreakBoxAudioEngine();
-                        yield this.engine.init();
-                        return;
-                    }
-                    catch (e) {
-                        console.warn('AudioWorklet initialization failed, falling back to legacy synth:', e);
-                        this.useWorklet = false;
-                    }
-                }
-                const legacySynth = new Synth(null);
-                this.fallback = new LegacySynthAdapter(legacySynth);
-                yield this.fallback.init();
-            });
-        }
-        setSong(song) {
-            if (this.engine) {
-                this.engine.setSong(song);
-            }
-            else if (this.fallback) {
-                this.fallback.setSong(song);
-            }
-        }
-        play() {
-            var _a, _b, _c;
-            (_b = (_a = this.engine) === null || _a === void 0 ? void 0 : _a.play()) !== null && _b !== void 0 ? _b : (_c = this.fallback) === null || _c === void 0 ? void 0 : _c.play();
-        }
-        pause() {
-            var _a, _b, _c;
-            (_b = (_a = this.engine) === null || _a === void 0 ? void 0 : _a.pause()) !== null && _b !== void 0 ? _b : (_c = this.fallback) === null || _c === void 0 ? void 0 : _c.pause();
-        }
-        stop() {
-            var _a, _b, _c;
-            (_b = (_a = this.engine) === null || _a === void 0 ? void 0 : _a.stop()) !== null && _b !== void 0 ? _b : (_c = this.fallback) === null || _c === void 0 ? void 0 : _c.stop();
-        }
-        seek(tick) {
-            var _a, _b, _c;
-            (_b = (_a = this.engine) === null || _a === void 0 ? void 0 : _a.seek(tick)) !== null && _b !== void 0 ? _b : (_c = this.fallback) === null || _c === void 0 ? void 0 : _c.seek(tick);
-        }
-        loadSample(key, buffer) {
-            var _a, _b, _c;
-            (_b = (_a = this.engine) === null || _a === void 0 ? void 0 : _a.loadSample(key, buffer)) !== null && _b !== void 0 ? _b : (_c = this.fallback) === null || _c === void 0 ? void 0 : _c.loadSample(key, buffer);
-        }
-        get onTick() {
-            var _a;
-            if (this.engine)
-                return this.engine.onTick;
-            return (_a = this.fallback) === null || _a === void 0 ? void 0 : _a.onTick;
-        }
-        set onTick(callback) {
-            if (this.engine)
-                this.engine.onTick = callback;
-            if (this.fallback)
-                this.fallback.onTick = callback;
-        }
-        scheduleNoteOn(voice, tick) {
-            var _a;
-            (_a = this.engine) === null || _a === void 0 ? void 0 : _a.scheduleNoteOn(voice, tick);
-        }
-        scheduleNoteOff(pitch, channel, instrument, tick) {
-            var _a;
-            (_a = this.engine) === null || _a === void 0 ? void 0 : _a.scheduleNoteOff(pitch, channel, instrument, tick);
-        }
-        scheduleFxUpdate(pitch, channel, instrument, fx, tick) {
-            var _a;
-            (_a = this.engine) === null || _a === void 0 ? void 0 : _a.scheduleFxUpdate(pitch, channel, instrument, fx, tick);
-        }
-        setMasterVolume(volume) {
-            var _a;
-            (_a = this.engine) === null || _a === void 0 ? void 0 : _a.setMasterVolume(volume);
-        }
-        dispose() {
-            var _a;
-            (_a = this.engine) === null || _a === void 0 ? void 0 : _a.dispose();
-            this.engine = null;
-            this.fallback = null;
         }
     }
 
@@ -38599,7 +38290,9 @@ li.select2-results__option[role=group] > strong:hover {
             this.synth = new Synth(this.song);
             this.synth.volume = this._calcVolume();
             this.synth.anticipatePoorPerformance = isMobile;
-            this.audioEngine = di.has(I_AUDIO_ENGINE) ? di.resolve(I_AUDIO_ENGINE) : new WorkletSynthAdapter();
+            this.audioEngine = di.has(I_AUDIO_ENGINE)
+                ? di.resolve(I_AUDIO_ENGINE)
+                : new LegacySynthAdapter(this.synth);
             this.audioEngine.onTick = (tick) => {
                 this.synth.playhead = tick;
                 this._onPlayheadUpdate(tick);
@@ -48211,7 +47904,8 @@ You should be redirected to the song at:<br /><br />
                 }
                 const sequence = new ChangeSequence();
                 this._lastChangeWasPatternSelection = this._doc.lastChangeWas(this._changePatternSelection);
-                this._doc.setProspectiveChange(this._dragChange);
+                this._dragChange = sequence;
+                this._doc.setProspectiveChange(sequence);
                 if (this._cursorAtStartOfSelection()) {
                     this._draggingStartOfSelection = true;
                 }
@@ -57561,7 +57255,6 @@ You should be redirected to the song at:<br /><br />
         return registry;
     }
 
-    di.register(I_AUDIO_ENGINE, WorkletSynthAdapter, true);
     const presetRegistry = createPresetRegistry(EditorConfig.presetCategories);
     di.register(I_PRESET_REGISTRY, presetRegistry, true);
     const editor = new SongEditor();

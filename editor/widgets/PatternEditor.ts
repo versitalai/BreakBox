@@ -1920,7 +1920,8 @@ export class PatternEditor {
 
             const sequence: ChangeSequence = new ChangeSequence();
             this._lastChangeWasPatternSelection = this._doc.lastChangeWas(this._changePatternSelection);
-            this._doc.setProspectiveChange(this._dragChange);
+            this._dragChange = sequence;
+            this._doc.setProspectiveChange(sequence);
 
             if (this._cursorAtStartOfSelection()) {
                 this._draggingStartOfSelection = true;

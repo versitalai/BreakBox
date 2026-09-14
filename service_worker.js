@@ -1,5 +1,5 @@
 
-const cacheName = "BreakBox-v2";
+const cacheName = "BreakBox-v3";
 
 self.addEventListener("install", function(event) {
 	event.waitUntil(
