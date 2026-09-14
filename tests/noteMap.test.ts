@@ -4,12 +4,32 @@ import { noteMapExtension, NoteAction } from '../synth/registries/instrumentExte
 import { instrumentExtensionRegistry } from '../synth/registries/InstrumentExtension';
 import { VoiceMode } from '../synth/registries/VoiceTypes';
 import { Instrument } from '../synth/model';
+import { Config, sampleLoadingState } from '../synth/SynthConfig';
 
 describe('NoteMap extension', () => {
     describe('registry', () => {
         it('should be registered in InstrumentExtensionRegistry', () => {
             expect(instrumentExtensionRegistry.has('noteMap')).toBe(true);
             expect(instrumentExtensionRegistry.get('noteMap')).toBe(noteMapExtension);
+        });
+    });
+
+    describe('loaded custom sample resolution', () => {
+        it('should resolve a mapped custom-sample URL to its loaded wave without copying it', () => {
+            const instrument = new Instrument(false, false);
+            const chipWaveIndex = Config.rawChipWaves.length;
+            const wave = new Float32Array([0, 0.5, 0, -0.5, 0]);
+            Config.rawChipWaves[chipWaveIndex] = { name: "NoteMap Test", index: chipWaveIndex, expression: 1, samples: wave };
+            sampleLoadingState.urlTable[chipWaveIndex] = "https://samples.example/kick.wav!loop";
+            instrument._noteMap = new Map<number, NoteAction>([
+                [60, { mode: VoiceMode.Replace, sampleUrl: "https://samples.example/kick.wav", rootKey: 60, gain: 1 }],
+            ]);
+
+            noteMapExtension.onCompute!({ instrument, instrumentState: {}, channelIndex: 0, instrumentIndex: 0 });
+
+            expect((instrument as any)._noteWaveMap.get(60)).toBe(wave);
+            Config.rawChipWaves.length = chipWaveIndex;
+            delete sampleLoadingState.urlTable[chipWaveIndex];
         });
     });
 

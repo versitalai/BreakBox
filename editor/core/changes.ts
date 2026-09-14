@@ -8,6 +8,8 @@ import { Change, ChangeGroup, ChangeSequence, UndoableChange } from "./Change";
 import { SongDocument } from "../model/SongDocument";
 import { ColorConfig } from "./ColorConfig";
 import { Slider } from "./HTMLWrapper";
+import { instrumentExtensionRegistry } from "../../synth/registries/InstrumentExtension";
+import { NoteAction } from "../../synth/registries/instrumentExtensions/noteMap";
 
 export function patternsContainSameInstruments(pattern1Instruments: number[], pattern2Instruments: number[]): boolean {
     const pattern2Has1Instruments: boolean = pattern1Instruments.every(instrument => pattern2Instruments.indexOf(instrument) != -1);
@@ -5730,6 +5732,43 @@ export class ChangeSetEnvelopeWaveform extends Change {
             this._didSomething();
         }
     }
+}
+
+export class ChangeNoteMap extends Change {
+    constructor(doc: SongDocument, newMap: ReadonlyMap<number, NoteAction>) {
+        super();
+        const instrument: Instrument = doc.song.channels[doc.channel].instruments[doc.getCurrentInstrument()];
+        const oldMap = instrument._noteMap as ReadonlyMap<number, NoteAction> | null;
+        const clonedMap = cloneNoteMap(newMap);
+        if (!noteMapsEqual(oldMap, clonedMap)) {
+            instrument._noteMap = clonedMap;
+            instrument._noteMapEnabled = clonedMap.size > 0;
+            // URL assignments may have changed, so force onCompute to resolve
+            // the new already-loaded waves without retaining stale ones.
+            (instrument as any)._noteWaveMap = new Map<number, Float32Array>();
+            const noteMapExtension = instrumentExtensionRegistry.get("noteMap");
+            if (clonedMap.size > 0 && noteMapExtension != null) instrument.attachExtension(noteMapExtension);
+            instrument.preset = instrument.type;
+            doc.notifier.changed();
+            this._didSomething();
+        }
+    }
+}
+
+function cloneNoteMap(source: ReadonlyMap<number, NoteAction>): Map<number, NoteAction> {
+    const result = new Map<number, NoteAction>();
+    for (const [pitch, action] of source) result.set(pitch, { ...action });
+    return result;
+}
+
+function noteMapsEqual(left: ReadonlyMap<number, NoteAction> | null, right: ReadonlyMap<number, NoteAction>): boolean {
+    if (left == null) return right.size === 0;
+    if (left.size !== right.size) return false;
+    for (const [pitch, action] of left) {
+        const other = right.get(pitch);
+        if (other == null || action.mode !== other.mode || action.sampleUrl !== other.sampleUrl || action.rootKey !== other.rootKey || action.gain !== other.gain) return false;
+    }
+    return true;
 }
 
 export class ChangeSampleGain extends Change {

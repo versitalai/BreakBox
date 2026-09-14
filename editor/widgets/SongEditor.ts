@@ -54,6 +54,7 @@ import { oscilloscopeCanvas } from "../../global/Oscilloscope";
 import { VisualLoopControlsPrompt } from "../prompts/VisualLoopControlsPrompt";
 import { SampleLoadingStatusPrompt } from "../prompts/SampleLoadingStatusPrompt";
 import { AddSamplesPrompt } from "../prompts/AddSamplesPrompt";
+import { NoteMapPrompt } from "../prompts/NoteMapPrompt";
 import { ShortenerConfigPrompt } from "../prompts/ShortenerConfigPrompt";
 
 const { button, div, input, select, span, optgroup, option, canvas } = HTML;
@@ -1061,6 +1062,8 @@ export class SongEditor {
     private readonly _sampleGainRow: HTMLDivElement = div({ class: "selectRow", style: "display: none;" }, span({ class: "tip" }, "Sample Gain:"), this._sampleGainSlider.container);
     private readonly _sampleLoadButton: HTMLButtonElement = button({ class: "sampleLoadButton", style: "height: auto; min-height: var(--button-size); margin-left: 0.5em;" }, "Load Sample");
     private readonly _sampleLoadRow: HTMLDivElement = div({ class: "selectRow", style: "display: none;" }, this._sampleLoadButton);
+    private readonly _noteMapButton: HTMLButtonElement = button({ class: "tip", style: "width: 100%;" }, "Map Note Samples...");
+    private readonly _noteMapRow: HTMLDivElement = div({ class: "selectRow", style: "display: none;" }, span({ class: "tip" }, "Note Samples:"), this._noteMapButton);
 
     private readonly _chordSelect: HTMLSelectElement = buildOptions(select({ style: "flex-shrink: 100"}), Config.chords.map(chord => chord.name));
     private readonly _chordDropdown: HTMLButtonElement = button({ style: "margin-left:0em; height:1.5em; width: 10px; padding: 0px; font-size: 8px;", onclick: () => this._toggleDropdownMenu(DropdownID.Chord) }, "▼");
@@ -1326,6 +1329,7 @@ export class SongEditor {
         this._sampleRootKeyRow,
         this._sampleGainRow,
         this._sampleLoadRow,
+        this._noteMapRow,
     );
     private readonly _usedPatternIndicator: SVGElement = SVG.path({ d: "M -6 -6 H 6 V 6 H -6 V -6 M -2 -3 L -2 -3 L -1 -4 H 1 V 4 H -1 V -1.2 L -1.2 -1 H -2 V -3 z", fill: ColorConfig.indicatorSecondary, "fill-rule": "evenodd" });
     private readonly _usedInstrumentIndicator: SVGElement = SVG.path({ d: "M -6 -0.8 H -3.8 V -6 H 0.8 V 4.4 H 2.2 V -0.8 H 6 V 0.8 H 3.8 V 6 H -0.8 V -4.4 H -2.2 V 0.8 H -6 z", fill: ColorConfig.indicatorSecondary });
@@ -1736,6 +1740,7 @@ export class SongEditor {
         this._sampleLoadButton.addEventListener("click", () => {
             this._openPrompt("addExternal");
         });
+        this._noteMapButton.addEventListener("click", () => this._openPrompt("noteMap"));
         this._monophonicNoteInputBox.addEventListener("input", this._whenSetMonophonicNote)
         this._vibratoSelect.addEventListener("change", this._whenSetVibrato);
         this._vibratoTypeSelect.addEventListener("change", this._whenSetVibratoType);
@@ -2320,6 +2325,9 @@ export class SongEditor {
                     break;
                 case "addExternal":
                     this.prompt = new AddSamplesPrompt(this.doc);
+                    break;
+                case "noteMap":
+                    this.prompt = new NoteMapPrompt(this.doc);
                     break;
                 case "generateEuclideanRhythm":
                     this.prompt = new EuclideanRhythmPrompt(this.doc);
@@ -3118,6 +3126,9 @@ export class SongEditor {
                 this._sampleGainRow.style.display = "none";
                 this._sampleLoadRow.style.display = "none";
             }
+
+            // Note maps layer or replace a note on any audible instrument.
+            this._noteMapRow.style.display = instrument.type == InstrumentType.mod ? "none" : "";
 
             if (this._openEnvelopeDropdown)
                 this._envelopeDropdownGroup.style.display = "";

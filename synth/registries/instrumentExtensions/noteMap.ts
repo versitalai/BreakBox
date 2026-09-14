@@ -5,6 +5,7 @@
 // the configured sample is played (either layered or replacing the default synth).
 
 import { Instrument } from '../../model';
+import { Config, sampleLoadingState } from '../../SynthConfig';
 import { Voice, VoiceMode } from '../VoiceTypes';
 import { InstrumentExtension, ComputeContext, RouteNoteContext } from '../InstrumentExtension';
 import { instrumentExtensionRegistry } from '../InstrumentExtension';
@@ -107,12 +108,25 @@ export const noteMapExtension: InstrumentExtension = {
         const noteMap = (instrument as any)._noteMap as Map<number, NoteAction> | null;
         if (!noteMap) return;
 
-        // Ensure wave map exists.
-        if (!(instrument as any)._noteWaveMap) {
-            (instrument as any)._noteWaveMap = new Map<number, Float32Array>();
+        // Resolve mapped URLs to the custom samples already loaded by the song.
+        // AddSamplesPrompt reloads the song after editing the custom-sample list, so
+        // Config.rawChipWaves is the single source of decoded sample buffers.
+        let waveMap = (instrument as any)._noteWaveMap as Map<number, Float32Array> | null;
+        if (waveMap == null) {
+            waveMap = new Map<number, Float32Array>();
+            (instrument as any)._noteWaveMap = waveMap;
         }
-        // Actual sample loading happens externally — the editor or a sample cache
-        // populates _noteWaveMap. This hook just ensures the structure exists.
+        // Keep existing entries when their mapping has not changed. This hook is
+        // reached from the renderer, so avoid rebuilding maps or copying waves.
+        for (const note of waveMap.keys()) {
+            if (!noteMap.has(note)) waveMap.delete(note);
+        }
+        for (const [note, action] of noteMap) {
+            if (!waveMap.has(note)) {
+                const wave = findLoadedWave(action.sampleUrl);
+                if (wave != null) waveMap.set(note, wave);
+            }
+        }
     },
 
     serialize(instrument: Instrument): number[] {
@@ -168,6 +182,21 @@ export const noteMapExtension: InstrumentExtension = {
         return index;
     },
 };
+
+
+function findLoadedWave(url: string): Float32Array | null {
+    const expected = normalizeSampleUrl(url);
+    for (const key in sampleLoadingState.urlTable) {
+        if (normalizeSampleUrl(sampleLoadingState.urlTable[+key]) !== expected) continue;
+        const wave = Config.rawChipWaves[+key];
+        if (wave != null && wave.samples.length > 0) return wave.samples;
+    }
+    return null;
+}
+
+function normalizeSampleUrl(url: string): string {
+    return url.split("!")[0].split(",")[0].trim();
+}
 
 // Register the extension on import.
 instrumentExtensionRegistry.register(noteMapExtension);
