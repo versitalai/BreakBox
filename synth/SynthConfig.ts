@@ -20,6 +20,8 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
+import { LocalSampleLibrary } from "./LocalSampleLibrary";
+
 export interface Dictionary<T> {
     [K: string]: T;
 }
@@ -378,6 +380,45 @@ export async function startLoadingSample(url: string, chipWaveIndex: number, pre
     const chipWave = Config.chipWaves[chipWaveIndex];
     const rawChipWave = Config.rawChipWaves[chipWaveIndex];
     const rawRawChipWave = Config.rawRawChipWaves[chipWaveIndex];
+
+    // Local IndexedDB samples: load ArrayBuffer directly, skip fetch.
+    if (url.startsWith("local:")) {
+        const hash = url.slice(6);
+        const buffer = await LocalSampleLibrary.load(hash);
+        if (buffer == null) {
+            sampleLoadingState.statusTable[chipWaveIndex] = SampleLoadingStatus.error;
+            alert("Local sample not found: " + (LocalSampleLibrary.getFilename(hash) || hash) + ".\nPlease re-upload it via the Add Samples dialog.");
+            sampleLoaderAudioContext.close();
+            return;
+        }
+        try {
+            const audioBuffer = await sampleLoaderAudioContext.decodeAudioData(buffer.slice(0));
+            const samples = centerWave(Array.from(audioBuffer.getChannelData(0)));
+            const integratedSamples = performIntegral(samples);
+            chipWave.samples = integratedSamples;
+            rawChipWave.samples = samples;
+            rawRawChipWave.samples = samples;
+            if (rawLoopOptions["isUsingAdvancedLoopControls"]) {
+                presetSettings["chipWaveLoopStart"] = rawLoopOptions["chipWaveLoopStart"] != null ? rawLoopOptions["chipWaveLoopStart"] : 0;
+                presetSettings["chipWaveLoopEnd"] = rawLoopOptions["chipWaveLoopEnd"] != null ? rawLoopOptions["chipWaveLoopEnd"] : samples.length - 1;
+                presetSettings["chipWaveLoopMode"] = rawLoopOptions["chipWaveLoopMode"] != null ? rawLoopOptions["chipWaveLoopMode"] : 0;
+                presetSettings["chipWavePlayBackwards"] = rawLoopOptions["chipWavePlayBackwards"];
+                presetSettings["chipWaveStartOffset"] = rawLoopOptions["chipWaveStartOffset"] != null ? rawLoopOptions["chipWaveStartOffset"] : 0;
+            }
+            sampleLoadingState.samplesLoaded++;
+            sampleLoadingState.statusTable[chipWaveIndex] = SampleLoadingStatus.loaded;
+            sampleLoadEvents.dispatchEvent(new SampleLoadedEvent(
+                sampleLoadingState.totalSamples,
+                sampleLoadingState.samplesLoaded
+            ));
+        } catch (error) {
+            sampleLoadingState.statusTable[chipWaveIndex] = SampleLoadingStatus.error;
+            alert("Failed to decode local sample " + (LocalSampleLibrary.getFilename(hash) || hash) + ":\n" + error);
+        }
+        sampleLoaderAudioContext.close();
+        return;
+    }
+
     if (OFFLINE) {
         if (url.slice(0, 5) === "file:") {
             const dirname = await getDirname();
@@ -917,8 +958,6 @@ export class Config {
         { name: "No Dabbing (MB)", realName: "no dabbing", flags:[true, true, false, true, true, true, true, true, true, false, true, false] },
         // todbox
         { name: "Jacked Toad (TB)", realName: "jacked toad", flags: [true, false, true, true, false, true, true, true, true, false, true, true] },
-        { name: "Test Scale (TB)", realName: "**t", flags: [true, true, false, false, false, true, true, false, false, true, true, false] },
-        // JukeBox
         { name: "Test Scale (TB)", realName: "**t", flags: [true, true, false, false, false, true, true, false, false, true, true, false] },
         
         // crashes, but not because of the lack of a root note

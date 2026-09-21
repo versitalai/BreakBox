@@ -5,6 +5,7 @@ import { clamp, parseFloatWithDefault, parseIntWithDefault } from "../../synth/s
 import { ColorConfig } from "../core/ColorConfig";
 import { EditorConfig } from "../core/EditorConfig";
 import { SongDocument } from "../model/SongDocument";
+import { LocalSampleLibrary } from "../../synth/LocalSampleLibrary";
 
 const { div, input, button, a, code, textarea, details, summary, span, ul, li, select, option, h2 } = HTML;
 
@@ -39,11 +40,15 @@ export class AddSamplesPrompt {
     private readonly _entryOptionsDisplayStates: Dictionary<boolean> = {};
     private readonly _cancelButton: HTMLButtonElement = button({ class: "cancelButton" });
     private readonly _okayButton: HTMLButtonElement = button({ class: "okayButton", style: "width: 45%;" }, "Okay");
-    private readonly _addSampleButton: HTMLButtonElement = button({ style: "height: auto; min-height: var(--button-size);" }, "Add sample");
+    private readonly _addSampleButton: HTMLButtonElement = button({ style: "height: auto; min-height: var(--button-size);" }, "Add sample URL");
+    private readonly _uploadSampleButton: HTMLButtonElement = button({ style: "height: auto; min-height: var(--button-size); margin-left: 0.5em;" }, "Upload from device");
+    private readonly _uploadInput: HTMLInputElement = input({ type: "file", accept: "audio/*", multiple: true, style: "display: none;" });
     private readonly _entryContainer: HTMLDivElement = div();
     private readonly _addMultipleSamplesButton: HTMLButtonElement = button({ style: "height: auto; min-height: var(--button-size); margin-left: 0.5em;" }, "Add multiple samples");
     private readonly _addSamplesAreaBottom: HTMLDivElement = div({ style: "margin-top: 0.5em;" },
         this._addSampleButton,
+        this._uploadSampleButton,
+        this._uploadInput,
         this._addMultipleSamplesButton
     );
     private readonly _instructionsLink: HTMLAnchorElement = a({ href: "#" }, "Here's more information and some instructions on how to use custom samples in JukeBox.");
@@ -89,7 +94,13 @@ export class AddSamplesPrompt {
             )
         ),
         div({ style: "margin-top: 0.5em; margin-bottom: 0.5em;" },
-            "As for where to upload your samples, here are some suggestions:",
+            "You can also use the ", span({ style: "font-weight: bold;" }, "Upload from device"), " button to load a sample directly from your computer.",
+            " It is stored in your browser and will survive page reloads.",
+            " Samples under 50 KB are embedded automatically when you copy a share URL.",
+            " Larger samples require hosting externally to share."
+        ),
+        div({ style: "margin-top: 0.5em; margin-bottom: 0.5em;" },
+            "As for where to host samples for sharing, here are some suggestions:",
             ul({ style: "text-align: left;" },
                 li(a({ href: "https://filegarden.com" }, "File Garden")),
 
@@ -151,6 +162,8 @@ export class AddSamplesPrompt {
             this._entries = parsed.entries;
         }
         this._addSampleButton.addEventListener("click", this._whenAddSampleClicked);
+        this._uploadSampleButton.addEventListener("click", this._whenUploadSampleClicked);
+        this._uploadInput.addEventListener("change", this._whenUploadInputChanged);
         this._addMultipleSamplesButton.addEventListener("click", this._whenAddMultipleSamplesClicked);
         this._bulkAddConfirmButton.addEventListener("click", this._whenBulkAddConfirmClicked);
         this._okayButton.addEventListener("click", this._saveChanges);
@@ -166,6 +179,8 @@ export class AddSamplesPrompt {
             this._entryContainer.removeChild(this._entryContainer.firstChild);
         }
         this._addSampleButton.removeEventListener("click", this._whenAddSampleClicked);
+        this._uploadSampleButton.removeEventListener("click", this._whenUploadSampleClicked);
+        this._uploadInput.removeEventListener("change", this._whenUploadInputChanged);
         this._addMultipleSamplesButton.removeEventListener("click", this._whenAddMultipleSamplesClicked);
         this._bulkAddConfirmButton.removeEventListener("click", this._whenBulkAddConfirmClicked);
         this._okayButton.removeEventListener("click", this._saveChanges);
@@ -203,6 +218,47 @@ export class AddSamplesPrompt {
             chipWavePlayBackwards: false,
         });
         this._entryOptionsDisplayStates[entryIndex] = false;
+        this._reconfigureAddSampleButton();
+        this._render(true);
+    }
+
+    private _whenUploadSampleClicked = (): void => {
+        this._uploadInput.value = "";
+        this._uploadInput.click();
+    }
+
+    private _whenUploadInputChanged = async (): Promise<void> => {
+        const files = this._uploadInput.files;
+        if (!files || files.length === 0) return;
+        this._uploadSampleButton.disabled = true;
+        this._uploadSampleButton.textContent = "Uploading...";
+        for (let i = 0; i < files.length; i++) {
+            if (this._entries.length >= this._maxSamples) break;
+            const file = files[i];
+            try {
+                const hash = await LocalSampleLibrary.store(file);
+                const localUrl = LocalSampleLibrary.makeUrl(hash);
+                // Check for duplicates
+                if (this._entries.some(e => e.url === localUrl)) continue;
+                const entryIndex = this._entries.length;
+                this._entries.push({
+                    url: localUrl,
+                    sampleRate: 44100,
+                    rootKey: 60,
+                    percussion: false,
+                    chipWaveLoopStart: null,
+                    chipWaveLoopEnd: null,
+                    chipWaveStartOffset: null,
+                    chipWaveLoopMode: null,
+                    chipWavePlayBackwards: false,
+                });
+                this._entryOptionsDisplayStates[entryIndex] = false;
+            } catch (err) {
+                alert("Failed to store sample " + file.name + ": " + err);
+            }
+        }
+        this._uploadSampleButton.disabled = false;
+        this._uploadSampleButton.textContent = "Upload from device";
         this._reconfigureAddSampleButton();
         this._render(true);
     }
@@ -617,6 +673,13 @@ export class AddSamplesPrompt {
     }
 
     private _getSampleName = (entry: SampleEntry): string => {
+        if (LocalSampleLibrary.isLocalUrl(entry.url)) {
+            const hash = LocalSampleLibrary.hashFromUrl(entry.url);
+            const name = LocalSampleLibrary.getFilename(hash);
+            const size = LocalSampleLibrary.getSizeSync(hash);
+            const kb = size > 0 ? ` (${(size / 1024).toFixed(1)} KB)` : "";
+            return name + kb + " [local]";
+        }
         try {
             const parsedUrl: URL = new URL(entry.url);
             return decodeURIComponent(parsedUrl.pathname.replace(/^([^\/]*\/)+/, ""));

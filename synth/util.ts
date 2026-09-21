@@ -90,6 +90,37 @@ export function encodeUnisonSettings(buffer: number[], v: number, s: number, o: 
     buffer.push(base64IntToCharCode[cleanI % 63], base64IntToCharCode[Math.floor(cleanI / 63)]);
 }
 
+// These helpers were originally static methods on Synth (dsp.ts). Moved here to
+// break the model.ts ↔ dsp.ts circular dependency.
+export function fadeInSettingToSeconds(setting: number): number {
+    return 0.0125 * (0.95 * setting + 0.05 * setting * setting);
+}
+export function secondsToFadeInSetting(seconds: number): number {
+    return clamp(0, Config.fadeInRange, Math.round((-0.95 + Math.sqrt(0.9025 + 0.2 * seconds / 0.0125)) / 0.1));
+}
+export function fadeOutSettingToTicks(setting: number): number {
+    return Config.fadeOutTicks[setting];
+}
+export function ticksToFadeOutSetting(ticks: number): number {
+    let lower: number = Config.fadeOutTicks[0];
+    if (ticks <= lower) return 0;
+    for (let i: number = 1; i < Config.fadeOutTicks.length; i++) {
+        const upper: number = Config.fadeOutTicks[i];
+        if (ticks <= upper) return (ticks < (lower + upper) / 2) ? i - 1 : i;
+        lower = upper;
+    }
+    return Config.fadeOutTicks.length - 1;
+}
+export function detuneToCents(detune: number): number {
+    return detune - Config.detuneCenter;
+}
+export function centsToDetune(cents: number): number {
+    return cents + Config.detuneCenter;
+}
+export function fittingPowerOfTwo(x: number): number {
+    return 1 << (32 - Math.clz32(Math.ceil(x) - 1));
+}
+
 export function convertLegacyKeyToKeyAndOctave(rawKeyIndex: number): [number, number] {
     let key: number = clamp(0, Config.keys.length, rawKeyIndex);
     let octave: number = 0;

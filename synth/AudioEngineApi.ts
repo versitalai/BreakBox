@@ -16,6 +16,8 @@ export interface AudioEngineApi {
 
 export interface NoteVoice {
     readonly pitch: number;
+    readonly channel: number;
+    readonly instrument: number;
     readonly start: number;
     readonly end: number;
     readonly velocity: number; // 0..1
@@ -41,6 +43,3 @@ export interface VoiceCommand {
     fx?: Partial<VoiceFx>;
 }
 
-export interface SchedulerCommand {
-    voiceCommand: VoiceCommand;
-}

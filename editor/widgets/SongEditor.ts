@@ -3,6 +3,7 @@
 
 //import {Layout} from "../core/Layout";
 import { sampleLoadEvents, SampleLoadedEvent, InstrumentType, EffectType, Config, effectsIncludeTransition, effectsIncludeChord, effectsIncludePitchShift, effectsIncludeDetune, effectsIncludeVibrato, effectsIncludeNoteFilter, effectsIncludeDistortion, effectsIncludeBitcrusher, effectsIncludePanning, effectsIncludeChorus, effectsIncludeEcho, effectsIncludeReverb, effectsIncludeRingModulation, effectsIncludeGranular, DropdownID, calculateRingModHertz, effectsIncludePhaser, effectsIncludeInvertWave, effectsIncludeNoteRange } from "../../synth/SynthConfig";
+import { LocalSampleLibrary, EMBED_TOTAL_LIMIT } from "../../synth/LocalSampleLibrary";
 import { BarScrollBar } from "./BarScrollBar";
 import { BeatsPerBarPrompt } from "../prompts/BeatsPerBarPrompt";
 import { Change, ChangeGroup } from "../core/Change";
@@ -5135,6 +5136,108 @@ export class SongEditor {
         this._keyboardLayout.handleKeyEvent(event, false);
     }
 
+    private _copyUrlWithLocalSampleCheck = async (): Promise<void> => {
+        const samples = EditorConfig.customSamples;
+        const hasLocals = samples != null && samples.some(s => {
+            let bare = s;
+            if (bare.startsWith("!")) { const e = bare.indexOf("!", 1); if (e !== -1) bare = bare.slice(e + 1); }
+            return LocalSampleLibrary.isLocalUrl(bare);
+        });
+        if (!hasLocals) {
+            this._copyTextToClipboard(new URL("#" + this.doc.song.toBase64String(), location.href).href);
+            return;
+        }
+
+        const { embeddable, oversized } = LocalSampleLibrary.classifyLocalSamples(samples!);
+
+        if (oversized.length === 0) {
+            // All local samples fit — embed them silently.
+            const embeddedSamples = await LocalSampleLibrary.buildShareableSampleList(samples!, embeddable);
+            const songBase = this.doc.song.toBase64String();
+            const sampleSuffix = embeddedSamples.length > 0 ? "|" + embeddedSamples.join("|") : "";
+            // Rebuild the URL: song data + embedded sample URLs.
+            // The song's toBase64String() already appends customSamples; we need
+            // to strip the original local: entries and replace with data: entries.
+            const baseNoSamples = songBase.split("|")[0];
+            const finalUrl = new URL("#" + baseNoSamples + sampleSuffix, location.href).href;
+            this._copyTextToClipboard(finalUrl);
+            return;
+        }
+
+        // Build warning dialog
+        const overlay = document.createElement("div");
+        overlay.style.cssText = "position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:9999;display:flex;align-items:center;justify-content:center;";
+        const dialog = document.createElement("div");
+        dialog.style.cssText = `background:${ColorConfig.editorBackground};border:2px solid ${ColorConfig.uiWidgetBackground};border-radius:8px;padding:1.5em;max-width:480px;width:90%;max-height:80vh;overflow-y:auto;font-family:inherit;`;
+
+        const title = document.createElement("h2");
+        title.style.cssText = "margin:0 0 0.75em 0;font-size:1.1em;";
+        title.textContent = "Some samples can't be shared via URL";
+        dialog.appendChild(title);
+
+        const addSampleList = (heading: string, items: typeof oversized): void => {
+            if (items.length === 0) return;
+            const intro = document.createElement("p");
+            intro.style.cssText = "margin:0 0 0.5em 0;";
+            intro.textContent = heading;
+            dialog.appendChild(intro);
+            const list = document.createElement("ul");
+            list.style.cssText = "margin:0 0 0.75em 1em;padding:0;";
+            for (const s of items) {
+                const li = document.createElement("li");
+                li.style.cssText = "margin-bottom:0.25em;";
+                li.textContent = `${s.filename} (${(s.size / 1024).toFixed(1)} KB)`;
+                list.appendChild(li);
+            }
+            dialog.appendChild(list);
+        };
+        addSampleList("These local samples are too large to embed in a share URL:", oversized.filter(s => s.reason === "size"));
+        addSampleList(`These samples are small, but together they would push the URL past ${Math.round(EMBED_TOTAL_LIMIT / 1024)} KB:`, oversized.filter(s => s.reason === "total"));
+
+        const hostNote = document.createElement("p");
+        hostNote.style.cssText = "margin:0 0 0.5em 0;";
+        hostNote.textContent = "Host large samples at:";
+        dialog.appendChild(hostNote);
+        const links = document.createElement("p");
+        links.style.cssText = "margin:0 0 1em 0;";
+        const fg = document.createElement("a");
+        fg.href = "https://filegarden.com"; fg.target = "_blank"; fg.textContent = "File Garden";
+        fg.style.cssText = `color:${ColorConfig.linkAccent};margin-right:1.5em;`;
+        const db = document.createElement("a");
+        db.href = "https://www.dropbox.com"; db.target = "_blank"; db.textContent = "Dropbox";
+        db.style.cssText = `color:${ColorConfig.linkAccent};`;
+        links.appendChild(fg); links.appendChild(db);
+        dialog.appendChild(links);
+
+        const note = document.createElement("p");
+        note.style.cssText = `margin:0 0 1em 0;font-size:0.875em;color:${ColorConfig.secondaryText};`;
+        note.textContent = embeddable.length > 0
+            ? `${embeddable.length} small sample(s) will be embedded. Missing samples will play as silence for others.`
+            : "The URL will be copied, but all local samples will play as silence for others.";
+        dialog.appendChild(note);
+
+        const btnRow = document.createElement("div");
+        btnRow.style.cssText = "display:flex;gap:0.75em;justify-content:flex-end;";
+        const cancelBtn = document.createElement("button");
+        cancelBtn.textContent = "Cancel"; cancelBtn.className = "cancelButton";
+        const copyBtn = document.createElement("button");
+        copyBtn.textContent = "Copy URL anyway"; copyBtn.className = "okayButton";
+        btnRow.appendChild(cancelBtn); btnRow.appendChild(copyBtn);
+        dialog.appendChild(btnRow);
+        overlay.appendChild(dialog);
+        document.body.appendChild(overlay);
+
+        const cleanup = () => document.body.removeChild(overlay);
+        cancelBtn.addEventListener("click", cleanup);
+        copyBtn.addEventListener("click", async () => {
+            cleanup();
+            const embeddedSamples = await LocalSampleLibrary.buildShareableSampleList(samples!, embeddable);
+            const baseNoSamples = this.doc.song.toBase64String().split("|")[0];
+            const sampleSuffix = embeddedSamples.length > 0 ? "|" + embeddedSamples.join("|") : "";
+            this._copyTextToClipboard(new URL("#" + baseNoSamples + sampleSuffix, location.href).href);
+        });
+    }
+
     private _copyTextToClipboard(text: string): void {
         // Set as any to allow compilation without clipboard types (since, uh, I didn't write this bit and don't know the proper types library) -jummbus
         let nav: any;
@@ -5696,7 +5799,7 @@ export class SongEditor {
                 this._openPrompt("import");
                 break;
             case "copyUrl":
-                this._copyTextToClipboard(new URL("#" + this.doc.song.toBase64String(), location.href).href);
+                this._copyUrlWithLocalSampleCheck();
                 break;
             case "shareUrl":
                 (<any>navigator).share({ url: new URL("#" + this.doc.song.toBase64String(), location.href).href });

@@ -9,9 +9,8 @@ import { instrumentExtensionRegistry } from "./registries/InstrumentExtension";
 import { scaleElementsByFactor, inverseRealFourierTransform } from "./FFT";
 import { FilterCoefficients, FrequencyResponse } from "./filtering";
 import { updateFromJukeBox3, updateFromJukeBox4, updateFromUltraBox } from "./PresetUpdates";
-import { clamp, parseFloatWithDefault, parseIntWithDefault, validateRange, encode32BitNumber, decode32BitNumber, encodeUnisonSettings, convertLegacyKeyToKeyAndOctave } from "./util";
+import { clamp, parseFloatWithDefault, parseIntWithDefault, validateRange, encode32BitNumber, decode32BitNumber, encodeUnisonSettings, convertLegacyKeyToKeyAndOctave, fadeInSettingToSeconds, secondsToFadeInSetting, fadeOutSettingToTicks, ticksToFadeOutSetting, detuneToCents, centsToDetune, fittingPowerOfTwo } from "./util";
 import { CharCode, SongTagCode, base64IntToCharCode, base64CharCodeToInt, BitFieldReader, BitFieldWriter } from "./format";
-import { Synth } from "./dsp";
 
 export interface NotePin {
     interval: number;
@@ -455,7 +454,7 @@ export class SpectrumWave {
     }
 
     public markCustomWaveDirty(): void {
-        const hashMult: number = Synth.fittingPowerOfTwo(Config.spectrumMax + 2) - 1;
+        const hashMult: number = fittingPowerOfTwo(Config.spectrumMax + 2) - 1;
         let hash: number = 0;
         for (const point of this.spectrum) hash = ((hash * hashMult) + point) >>> 0;
         this.hash = hash;
@@ -532,7 +531,7 @@ export class HarmonicsWave {
     }
 
     public markCustomWaveDirty(): void {
-        const hashMult: number = Synth.fittingPowerOfTwo(Config.harmonicsMax + 2) - 1;
+        const hashMult: number = fittingPowerOfTwo(Config.harmonicsMax + 2) - 1;
         let hash: number = 0;
         for (const point of this.harmonics) hash = ((hash * hashMult) + point) >>> 0;
         this.hash = hash;
@@ -1808,7 +1807,7 @@ export class Instrument {
             instrumentObject["pitchShiftSemitones"] = this.pitchShift;
         }
         if (effectsIncludeDetune(this.effects)) {
-            instrumentObject["detuneCents"] = Synth.detuneToCents(this.detune);
+            instrumentObject["detuneCents"] = detuneToCents(this.detune);
         }
         if (effectsIncludeVibrato(this.effects)) {
             if (this.vibrato == -1) {
@@ -1886,8 +1885,8 @@ export class Instrument {
         
 
         if (this.type != InstrumentType.drumset) {
-            instrumentObject["fadeInSeconds"] = Math.round(10000 * Synth.fadeInSettingToSeconds(this.fadeIn)) / 10000;
-            instrumentObject["fadeOutTicks"] = Synth.fadeOutSettingToTicks(this.fadeOut);
+            instrumentObject["fadeInSeconds"] = Math.round(10000 * fadeInSettingToSeconds(this.fadeIn)) / 10000;
+            instrumentObject["fadeOutTicks"] = fadeOutSettingToTicks(this.fadeOut);
         }
 
         if (this.type == InstrumentType.harmonics || this.type == InstrumentType.pickedString) {
@@ -2092,6 +2091,8 @@ export class Instrument {
         let type: InstrumentType = Config.instrumentTypeNames.indexOf(instrumentObject["type"]);
         // SynthBox support
         if ((format == "synthbox") && (instrumentObject["type"] == "FM")) type = Config.instrumentTypeNames.indexOf("FM6op");
+        // Backward compat: "additive" instrument type was removed in BreakBox; harmonics is the closest equivalent
+        if (<any>type == -1 && instrumentObject["type"] === "additive") type = InstrumentType.harmonics;
         if (<any>type == -1) type = isModChannel ? InstrumentType.mod : (isNoiseChannel ? InstrumentType.noise : InstrumentType.chip);
         this.setTypeAndReset(type, isNoiseChannel, isModChannel);
 
@@ -2151,8 +2152,8 @@ export class Instrument {
                 if (legacySettings != undefined) {
                     transition = Config.transitions.dictionary[legacySettings.transition];
                     // These may be overridden below.
-                    this.fadeIn = Synth.secondsToFadeInSetting(legacySettings.fadeInSeconds);
-                    this.fadeOut = Synth.ticksToFadeOutSetting(legacySettings.fadeOutTicks);
+                    this.fadeIn = secondsToFadeInSetting(legacySettings.fadeInSeconds);
+                    this.fadeOut = ticksToFadeOutSetting(legacySettings.fadeOutTicks);
                 }
             }
             if (transition != undefined) this.transition = transition.index;
@@ -2165,10 +2166,10 @@ export class Instrument {
 
         // Overrides legacy settings in transition above.
         if (instrumentObject["fadeInSeconds"] != undefined) {
-            this.fadeIn = Synth.secondsToFadeInSetting(+instrumentObject["fadeInSeconds"]);
+            this.fadeIn = secondsToFadeInSetting(+instrumentObject["fadeInSeconds"]);
         }
         if (instrumentObject["fadeOutTicks"] != undefined) {
-            this.fadeOut = Synth.ticksToFadeOutSetting(+instrumentObject["fadeOutTicks"]);
+            this.fadeOut = ticksToFadeOutSetting(+instrumentObject["fadeOutTicks"]);
         }
 
         {
@@ -2240,7 +2241,7 @@ export class Instrument {
             }
         }
         if (instrumentObject["detuneCents"] != undefined) {
-            this.detune = clamp(Config.detuneMin, Config.detuneMax + 1, Math.round(Synth.centsToDetune(+instrumentObject["detuneCents"])));
+            this.detune = clamp(Config.detuneMin, Config.detuneMax + 1, Math.round(centsToDetune(+instrumentObject["detuneCents"])));
         }
 
         this.vibrato = Config.vibratos.dictionary["none"].index; // default value.
@@ -2950,11 +2951,11 @@ export class Instrument {
     }
 
     public getFadeInSeconds(): number {
-        return (this.type == InstrumentType.drumset) ? 0.0 : Synth.fadeInSettingToSeconds(this.fadeIn);
+        return (this.type == InstrumentType.drumset) ? 0.0 : fadeInSettingToSeconds(this.fadeIn);
     }
 
     public getFadeOutTicks(): number {
-        return (this.type == InstrumentType.drumset) ? Config.drumsetFadeOutTicks : Synth.fadeOutSettingToTicks(this.fadeOut)
+        return (this.type == InstrumentType.drumset) ? Config.drumsetFadeOutTicks : fadeOutSettingToTicks(this.fadeOut)
     }
 
     public getChord(): Chord {
@@ -4970,8 +4971,8 @@ export class Song {
                         const channelIndex: number = base64CharCodeToInt[compressed.charCodeAt(charIndex++)];
                         const settings = legacySettings[clamp(0, legacySettings.length, base64CharCodeToInt[compressed.charCodeAt(charIndex++)])];
                         const instrument: Instrument = this.channels[channelIndex].instruments[0];
-                        instrument.fadeIn = Synth.secondsToFadeInSetting(settings.fadeInSeconds);
-                        instrument.fadeOut = Synth.ticksToFadeOutSetting(settings.fadeOutTicks);
+                        instrument.fadeIn = secondsToFadeInSetting(settings.fadeInSeconds);
+                        instrument.fadeOut = ticksToFadeOutSetting(settings.fadeOutTicks);
                         instrument.transition = Config.transitions.dictionary[settings.transition].index;
                         if (instrument.transition != Config.transitions.dictionary["normal"].index) {
                             // Enable transition if it was used.
@@ -4981,8 +4982,8 @@ export class Song {
                         for (let channelIndex: number = 0; channelIndex < this.getChannelCount(); channelIndex++) {
                             for (const instrument of this.channels[channelIndex].instruments) {
                                 const settings = legacySettings[clamp(0, legacySettings.length, base64CharCodeToInt[compressed.charCodeAt(charIndex++)])];
-                                instrument.fadeIn = Synth.secondsToFadeInSetting(settings.fadeInSeconds);
-                                instrument.fadeOut = Synth.ticksToFadeOutSetting(settings.fadeOutTicks);
+                                instrument.fadeIn = secondsToFadeInSetting(settings.fadeInSeconds);
+                                instrument.fadeOut = ticksToFadeOutSetting(settings.fadeOutTicks);
                                 instrument.transition = Config.transitions.dictionary[settings.transition].index;
                                 if (instrument.transition != Config.transitions.dictionary["normal"].index) {
                                     // Enable transition if it was used.
@@ -4993,8 +4994,8 @@ export class Song {
                     } else if ((beforeFour && !fromGoldBox && !fromUltraBox && !fromSlarmoosBox && !fromJukeBox) || fromBeepBox) {
                         const settings = legacySettings[clamp(0, legacySettings.length, base64CharCodeToInt[compressed.charCodeAt(charIndex++)])];
                         const instrument: Instrument = this.channels[instrumentChannelIterator].instruments[instrumentIndexIterator];
-                        instrument.fadeIn = Synth.secondsToFadeInSetting(settings.fadeInSeconds);
-                        instrument.fadeOut = Synth.ticksToFadeOutSetting(settings.fadeOutTicks);
+                        instrument.fadeIn = secondsToFadeInSetting(settings.fadeInSeconds);
+                        instrument.fadeOut = ticksToFadeOutSetting(settings.fadeOutTicks);
                         instrument.transition = Config.transitions.dictionary[settings.transition].index;
                         if (instrument.transition != Config.transitions.dictionary["normal"].index) {
                             // Enable transition if it was used.
@@ -5003,8 +5004,8 @@ export class Song {
                     } else {
                         const settings = legacySettings[clamp(0, legacySettings.length, base64CharCodeToInt[compressed.charCodeAt(charIndex++)])];
                         const instrument: Instrument = this.channels[instrumentChannelIterator].instruments[instrumentIndexIterator];
-                        instrument.fadeIn = Synth.secondsToFadeInSetting(settings.fadeInSeconds);
-                        instrument.fadeOut = Synth.ticksToFadeOutSetting(settings.fadeOutTicks);
+                        instrument.fadeIn = secondsToFadeInSetting(settings.fadeInSeconds);
+                        instrument.fadeOut = ticksToFadeOutSetting(settings.fadeOutTicks);
                         instrument.transition = Config.transitions.dictionary[settings.transition].index;
 
                         // Read tie-note 
@@ -6453,6 +6454,7 @@ export class Song {
     }
 
     private static _isProperUrl(string: string): boolean {
+        if (string.startsWith("local:")) return true;
         try {
             if (OFFLINE) {
                 return Boolean(string);
@@ -6609,6 +6611,7 @@ export class Song {
         }
 
         if (parsedUrl != null) {
+            const isLocalSample = urlSliced.startsWith("local:");
             // Store in the new format.
             let urlWithNamedOptions = urlSliced;
             const namedOptions: string[] = [];
@@ -6634,7 +6637,19 @@ export class Song {
             // uses an url like `https://example.com`, this will
             // result in an empty name here.
             let name: string;
-            if (OFFLINE) {
+            if (isLocalSample) {
+                // Use the filename stored in the localStorage cache at upload time.
+                // Dynamic import is not available here (sync context), so we read
+                // the cache key directly as a fallback.
+                const hash = urlSliced.slice(6);
+                try {
+                    const raw = localStorage.getItem("bb_sample_meta");
+                    const cache = raw ? JSON.parse(raw) : {};
+                    name = cache[hash]?.name ?? hash;
+                } catch {
+                    name = hash;
+                }
+            } else if (OFFLINE) {
                 //@ts-ignore
                 name = decodeURIComponent(parsedUrl.replace(/^([^\/]*\/)+/, ""));
             } else {
