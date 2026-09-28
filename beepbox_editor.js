@@ -18497,9 +18497,9 @@ li.select2-results__option[role=group] > strong:hover {
                             const data = ext.serialize(instrument);
                             if (data.length > 0) {
                                 const extIdx = instrumentExtensionRegistry.getOrderedIds().indexOf(ext.id);
-                                extensionData.push(extIdx >= 0 ? extIdx : 0);
-                                extensionData.push(Math.min(data.length, 4095) >> 6);
-                                extensionData.push(Math.min(data.length, 4095) & 0x3F);
+                                extensionData.push(base64IntToCharCode[extIdx >= 0 ? extIdx : 0]);
+                                const dataLen = Math.min(data.length, 4095);
+                                extensionData.push(base64IntToCharCode[dataLen >> 6], base64IntToCharCode[dataLen & 0x3F]);
                                 for (let i = 0; i < data.length && i < 4095; i++) {
                                     extensionData.push(data[i]);
                                 }
@@ -53461,7 +53461,7 @@ You should be redirected to the song at:<br /><br />
             this._sampleGainRow = div({ class: "selectRow", style: "display: none;" }, span({ class: "tip" }, "Sample Gain:"), this._sampleGainSlider.container);
             this._sampleLoadButton = button({ class: "sampleLoadButton", style: "height: auto; min-height: var(--button-size); margin-left: 0.5em;" }, "Load Sample");
             this._sampleLoadRow = div({ class: "selectRow", style: "display: none;" }, this._sampleLoadButton);
-            this._noteMapButton = button({ class: "tip", style: "width: 100%;" }, "Map Note Samples...");
+            this._noteMapButton = button({ class: "tip", style: "height: auto; min-height: var(--button-size);" }, "Map Note Samples...");
             this._noteMapRow = div({ class: "selectRow", style: "display: none;" }, span({ class: "tip" }, "Note Samples:"), this._noteMapButton);
             this._chordSelect = buildOptions(select({ style: "flex-shrink: 100" }), Config.chords.map(chord => chord.name));
             this._chordDropdown = button({ style: "margin-left:0em; height:1.5em; width: 10px; padding: 0px; font-size: 8px;", onclick: () => this._toggleDropdownMenu(2) }, "▼");

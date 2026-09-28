@@ -1063,7 +1063,11 @@ export class SongEditor {
     private readonly _sampleGainRow: HTMLDivElement = div({ class: "selectRow", style: "display: none;" }, span({ class: "tip" }, "Sample Gain:"), this._sampleGainSlider.container);
     private readonly _sampleLoadButton: HTMLButtonElement = button({ class: "sampleLoadButton", style: "height: auto; min-height: var(--button-size); margin-left: 0.5em;" }, "Load Sample");
     private readonly _sampleLoadRow: HTMLDivElement = div({ class: "selectRow", style: "display: none;" }, this._sampleLoadButton);
-    private readonly _noteMapButton: HTMLButtonElement = button({ class: "tip", style: "width: 100%;" }, "Map Note Samples...");
+    // No inline width here: .selectRow > :last-child already sizes the last
+    // child to 62.5% to leave room for the "Note Samples:" label before it.
+    // An inline width: 100% (as this used to have) beats that CSS rule and
+    // pushes the button past the row, squeezing/overflowing the label.
+    private readonly _noteMapButton: HTMLButtonElement = button({ class: "tip", style: "height: auto; min-height: var(--button-size);" }, "Map Note Samples...");
     private readonly _noteMapRow: HTMLDivElement = div({ class: "selectRow", style: "display: none;" }, span({ class: "tip" }, "Note Samples:"), this._noteMapButton);
 
     private readonly _chordSelect: HTMLSelectElement = buildOptions(select({ style: "flex-shrink: 100"}), Config.chords.map(chord => chord.name));

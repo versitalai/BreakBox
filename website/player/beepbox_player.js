@@ -16593,9 +16593,9 @@ var beepbox = (function (exports) {
                             const data = ext.serialize(instrument);
                             if (data.length > 0) {
                                 const extIdx = instrumentExtensionRegistry.getOrderedIds().indexOf(ext.id);
-                                extensionData.push(extIdx >= 0 ? extIdx : 0);
-                                extensionData.push(Math.min(data.length, 4095) >> 6);
-                                extensionData.push(Math.min(data.length, 4095) & 0x3F);
+                                extensionData.push(base64IntToCharCode[extIdx >= 0 ? extIdx : 0]);
+                                const dataLen = Math.min(data.length, 4095);
+                                extensionData.push(base64IntToCharCode[dataLen >> 6], base64IntToCharCode[dataLen & 0x3F]);
                                 for (let i = 0; i < data.length && i < 4095; i++) {
                                     extensionData.push(data[i]);
                                 }

@@ -3808,13 +3808,16 @@ export class Song {
                     if (ext.serialize) {
                         const data = ext.serialize(instrument);
                         if (data.length > 0) {
-                            // Extension ID as single char (index into registry ordered list)
+                            // Extension ID as single char (index into registry ordered list).
+                            // Read back via base64CharCodeToInt, so it must be written as a
+                            // base64-alphabet char, not a raw control-code byte.
                             const extIdx = instrumentExtensionRegistry.getOrderedIds().indexOf((ext as any).id);
-                            extensionData.push(extIdx >= 0 ? extIdx : 0);
-                            // Data length as 2 chars (max 4095)
-                            extensionData.push(Math.min(data.length, 4095) >> 6);
-                            extensionData.push(Math.min(data.length, 4095) & 0x3F);
-                            // Data bytes
+                            extensionData.push(base64IntToCharCode[extIdx >= 0 ? extIdx : 0]);
+                            // Data length as 2 chars (max 4095), same base64-char encoding.
+                            const dataLen = Math.min(data.length, 4095);
+                            extensionData.push(base64IntToCharCode[dataLen >> 6], base64IntToCharCode[dataLen & 0x3F]);
+                            // Data bytes: read back with charCodeAt directly (not base64-decoded),
+                            // so these are pushed as raw char codes.
                             for (let i = 0; i < data.length && i < 4095; i++) {
                                 extensionData.push(data[i]);
                             }
