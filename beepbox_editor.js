@@ -21280,6 +21280,7 @@ li.select2-results__option[role=group] > strong:hover {
                 }
                 const customSamplePreset = {
                     index: 0,
+                    id: 1000000 + chipWaveIndex,
                     name: name,
                     midiProgram: 80,
                     settings: customSamplePresetSettings,

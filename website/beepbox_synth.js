@@ -11709,6 +11709,7 @@ var beepbox = (function (exports) {
                 }
                 const customSamplePreset = {
                     index: 0,
+                    id: 1000000 + chipWaveIndex,
                     name: name,
                     midiProgram: 80,
                     settings: customSamplePresetSettings,

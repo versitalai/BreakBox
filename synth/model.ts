@@ -6713,6 +6713,12 @@ export class Song {
             }
             const customSamplePreset: Preset = {
                 index: 0, // This should be overwritten by toNameMap, in our caller.
+                // Hardcoded presets top out well under 3000 (see EditorConfig.ts);
+                // offset by chipWaveIndex (unique per loaded sample) to avoid collisions.
+                // Without an id, the preset <option> has no value attribute and the
+                // browser falls back to its text content, which the preset-select
+                // handler can't parse as a number — selecting it silently does nothing.
+                id: 1000000 + chipWaveIndex,
                 name: name,
                 midiProgram: 80,
                 settings: customSamplePresetSettings,
