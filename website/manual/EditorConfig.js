@@ -1,6 +1,232 @@
 var EditorConfig = (function (exports) {
     'use strict';
 
+    var __awaiter = (exports && exports.__awaiter) || function (thisArg, _arguments, P, generator) {
+        function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
+        return new (P || (P = Promise))(function (resolve, reject) {
+            function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
+            function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
+            function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
+            step((generator = generator.apply(thisArg, _arguments || [])).next());
+        });
+    };
+    const DB_NAME = "BreakBoxSampleLibrary";
+    const DB_VERSION = 1;
+    const STORE_NAME = "samples";
+    const LS_KEY = "bb_sample_meta";
+    const EMBED_PER_SAMPLE_LIMIT = 51200;
+    const EMBED_TOTAL_LIMIT = 204800;
+    class LocalSampleLibrary {
+        static isLocalUrl(url) {
+            return url.startsWith("local:");
+        }
+        static hashFromUrl(url) {
+            return url.slice(6);
+        }
+        static makeUrl(hash) {
+            return "local:" + hash;
+        }
+        static getFilename(hash) {
+            var _a, _b;
+            return (_b = (_a = LocalSampleLibrary._cache[hash]) === null || _a === void 0 ? void 0 : _a.name) !== null && _b !== void 0 ? _b : hash;
+        }
+        static getSizeSync(hash) {
+            var _a, _b;
+            return (_b = (_a = LocalSampleLibrary._cache[hash]) === null || _a === void 0 ? void 0 : _a.size) !== null && _b !== void 0 ? _b : 0;
+        }
+        static getMimeSync(hash) {
+            var _a, _b;
+            return (_b = (_a = LocalSampleLibrary._cache[hash]) === null || _a === void 0 ? void 0 : _a.mime) !== null && _b !== void 0 ? _b : "audio/wav";
+        }
+        static computeHash(buffer) {
+            return __awaiter(this, void 0, void 0, function* () {
+                const hashBuf = yield crypto.subtle.digest("SHA-256", buffer);
+                return Array.from(new Uint8Array(hashBuf))
+                    .map(b => b.toString(16).padStart(2, "0"))
+                    .join("")
+                    .slice(0, 16);
+            });
+        }
+        static store(file) {
+            return __awaiter(this, void 0, void 0, function* () {
+                const buffer = yield file.arrayBuffer();
+                const hash = yield LocalSampleLibrary.computeHash(buffer);
+                const mime = file.type || "audio/wav";
+                const db = yield LocalSampleLibrary._open();
+                yield new Promise((resolve, reject) => {
+                    const tx = db.transaction(STORE_NAME, "readwrite");
+                    tx.objectStore(STORE_NAME).put({ hash, filename: file.name, size: file.size, mimeType: mime, dateAdded: Date.now(), data: buffer });
+                    tx.oncomplete = () => resolve();
+                    tx.onerror = () => reject(tx.error);
+                });
+                db.close();
+                LocalSampleLibrary._cache[hash] = { name: file.name, size: file.size, mime };
+                LocalSampleLibrary._saveCache();
+                return hash;
+            });
+        }
+        static load(hash) {
+            return __awaiter(this, void 0, void 0, function* () {
+                const db = yield LocalSampleLibrary._open();
+                return new Promise(resolve => {
+                    const req = db.transaction(STORE_NAME, "readonly").objectStore(STORE_NAME).get(hash);
+                    req.onsuccess = () => { var _a, _b; db.close(); resolve((_b = (_a = req.result) === null || _a === void 0 ? void 0 : _a.data) !== null && _b !== void 0 ? _b : null); };
+                    req.onerror = () => { db.close(); resolve(null); };
+                });
+            });
+        }
+        static list() {
+            return __awaiter(this, void 0, void 0, function* () {
+                const db = yield LocalSampleLibrary._open();
+                return new Promise(resolve => {
+                    const req = db.transaction(STORE_NAME, "readonly").objectStore(STORE_NAME).getAll();
+                    req.onsuccess = () => {
+                        var _a;
+                        db.close();
+                        resolve(((_a = req.result) !== null && _a !== void 0 ? _a : []).map(({ hash, filename, size, mimeType, dateAdded }) => ({ hash, filename, size, mimeType, dateAdded })));
+                    };
+                    req.onerror = () => { db.close(); resolve([]); };
+                });
+            });
+        }
+        static remove(hash) {
+            return __awaiter(this, void 0, void 0, function* () {
+                const db = yield LocalSampleLibrary._open();
+                yield new Promise((resolve, reject) => {
+                    const tx = db.transaction(STORE_NAME, "readwrite");
+                    tx.objectStore(STORE_NAME).delete(hash);
+                    tx.oncomplete = () => resolve();
+                    tx.onerror = () => reject(tx.error);
+                });
+                db.close();
+                delete LocalSampleLibrary._cache[hash];
+                LocalSampleLibrary._saveCache();
+            });
+        }
+        static toDataUrl(hash) {
+            return __awaiter(this, void 0, void 0, function* () {
+                const buffer = yield LocalSampleLibrary.load(hash);
+                if (buffer == null)
+                    return null;
+                const mime = LocalSampleLibrary.getMimeSync(hash);
+                const bytes = new Uint8Array(buffer);
+                let binary = "";
+                const chunk = 8192;
+                for (let i = 0; i < bytes.length; i += chunk) {
+                    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+                }
+                return `data:${mime};base64,${btoa(binary)}`;
+            });
+        }
+        static classifyLocalSamples(sampleUrls) {
+            const embeddable = [];
+            const oversized = [];
+            let totalBytes = 0;
+            const locals = [];
+            for (const urlEntry of sampleUrls) {
+                let bare = urlEntry;
+                if (bare.startsWith("!")) {
+                    const end = bare.indexOf("!", 1);
+                    if (end !== -1)
+                        bare = bare.slice(end + 1);
+                }
+                if (!LocalSampleLibrary.isLocalUrl(bare))
+                    continue;
+                const hash = LocalSampleLibrary.hashFromUrl(bare);
+                const size = LocalSampleLibrary.getSizeSync(hash);
+                const filename = LocalSampleLibrary.getFilename(hash);
+                locals.push({ hash, size, filename });
+            }
+            for (const l of locals) {
+                if (l.size > EMBED_PER_SAMPLE_LIMIT) {
+                    oversized.push(Object.assign(Object.assign({}, l), { reason: "size" }));
+                }
+                else {
+                    totalBytes += l.size;
+                }
+            }
+            if (totalBytes > EMBED_TOTAL_LIMIT) {
+                const okSamples = locals.filter(l => l.size <= EMBED_PER_SAMPLE_LIMIT)
+                    .sort((a, b) => b.size - a.size);
+                totalBytes = 0;
+                for (const s of okSamples) {
+                    if (totalBytes + s.size <= EMBED_TOTAL_LIMIT) {
+                        embeddable.push(s.hash);
+                        totalBytes += s.size;
+                    }
+                    else {
+                        oversized.push(Object.assign(Object.assign({}, s), { reason: "total" }));
+                    }
+                }
+            }
+            else {
+                for (const l of locals.filter(l => l.size <= EMBED_PER_SAMPLE_LIMIT)) {
+                    embeddable.push(l.hash);
+                }
+            }
+            return { embeddable, oversized, totalEmbedBytes: totalBytes };
+        }
+        static buildShareableSampleList(sampleUrls, embeddable) {
+            return __awaiter(this, void 0, void 0, function* () {
+                const allowed = new Set(embeddable);
+                const result = [];
+                for (const urlEntry of sampleUrls) {
+                    let optionsPrefix = "";
+                    let bare = urlEntry;
+                    if (bare.startsWith("!")) {
+                        const end = bare.indexOf("!", 1);
+                        if (end !== -1) {
+                            optionsPrefix = bare.slice(0, end + 1);
+                            bare = bare.slice(end + 1);
+                        }
+                    }
+                    if (LocalSampleLibrary.isLocalUrl(bare)) {
+                        const hash = LocalSampleLibrary.hashFromUrl(bare);
+                        const size = LocalSampleLibrary.getSizeSync(hash);
+                        if (size > 0 && allowed.has(hash)) {
+                            const dataUrl = yield LocalSampleLibrary.toDataUrl(hash);
+                            if (dataUrl != null) {
+                                result.push(optionsPrefix + dataUrl);
+                                continue;
+                            }
+                        }
+                    }
+                    result.push(urlEntry);
+                }
+                return result;
+            });
+        }
+        static _open() {
+            return new Promise((resolve, reject) => {
+                const req = indexedDB.open(DB_NAME, DB_VERSION);
+                req.onupgradeneeded = (e) => {
+                    const db = e.target.result;
+                    if (!db.objectStoreNames.contains(STORE_NAME)) {
+                        db.createObjectStore(STORE_NAME, { keyPath: "hash" });
+                    }
+                };
+                req.onsuccess = () => resolve(req.result);
+                req.onerror = () => reject(req.error);
+            });
+        }
+        static _loadCache() {
+            try {
+                const raw = localStorage.getItem(LS_KEY);
+                if (raw)
+                    return JSON.parse(raw);
+            }
+            catch (_a) { }
+            return {};
+        }
+        static _saveCache() {
+            try {
+                localStorage.setItem(LS_KEY, JSON.stringify(LocalSampleLibrary._cache));
+            }
+            catch (_a) { }
+        }
+    }
+    LocalSampleLibrary._cache = LocalSampleLibrary._loadCache();
+
     /*!
     Copyright (c) 2012-2022 John Nesky and contributing authors
 
@@ -32,7 +258,7 @@ var EditorConfig = (function (exports) {
         });
     };
     var _a;
-    const TypePresets = ["chip", "FM", "noise", "spectrum", "drumset", "harmonics", "pulse width", "picked string", "supersaw", "chip (custom)", "mod", "FM (6-op)"];
+    const TypePresets = ["chip", "FM", "noise", "spectrum", "drumset", "harmonics", "pulse width", "picked string", "supersaw", "chip (custom)", "mod", "FM (6-op)", "sample trigger"];
     class SampleLoadEvents extends EventTarget {
         constructor() {
             super();
@@ -177,7 +403,6 @@ var EditorConfig = (function (exports) {
         { name: "No Dabbing (MB)", realName: "no dabbing", flags: [true, true, false, true, true, true, true, true, true, false, true, false] },
         { name: "Jacked Toad (TB)", realName: "jacked toad", flags: [true, false, true, true, false, true, true, true, true, false, true, true] },
         { name: "Test Scale (TB)", realName: "**t", flags: [true, true, false, false, false, true, true, false, false, true, true, false] },
-        { name: "Test Scale (TB)", realName: "**t", flags: [true, true, false, false, false, true, true, false, false, true, true, false] },
         { name: "Custom", realName: "custom", flags: [true, false, false, true, false, false, false, false, false, true, true, false] },
     ]);
     Config.keys = toNameMap([
@@ -235,8 +460,8 @@ var EditorConfig = (function (exports) {
         { name: "÷12", stepsPerBeat: 12, roundUpThresholds: null },
         { name: "freehand (÷24)", stepsPerBeat: 24, roundUpThresholds: null },
     ]);
-    Config.instrumentTypeNames = ["chip", "FM", "noise", "spectrum", "drumset", "harmonics", "PWM", "Picked String", "supersaw", "custom chip", "mod", "FM6op"];
-    Config.instrumentTypeHasSpecialInterval = [true, true, false, false, false, true, false, false, false, false, false];
+    Config.instrumentTypeNames = ["chip", "FM", "noise", "spectrum", "drumset", "harmonics", "PWM", "Picked String", "supersaw", "custom chip", "mod", "FM6op", "sample trigger"];
+    Config.instrumentTypeHasSpecialInterval = [true, true, false, false, false, true, false, false, false, false, false, false, false];
     Config.chipBaseExpression = 0.03375;
     Config.fmBaseExpression = 0.03;
     Config.noiseBaseExpression = 0.19;
@@ -1296,6 +1521,33 @@ var EditorConfig = (function (exports) {
         return result;
     }
 
+    class DefaultEnvironment {
+        get isOffline() {
+            try {
+                return (typeof globalThis.OFFLINE !== 'undefined') ? !!globalThis.OFFLINE : false;
+            }
+            catch (_a) {
+                return false;
+            }
+        }
+        get userAgent() { return navigator.userAgent; }
+        get platform() { return navigator.platform; }
+        get baseURI() { return document.baseURI || location.href; }
+        get locationHash() { return window.location.hash; }
+        get sessionStorage() { return window.sessionStorage; }
+        get localStorage() { return window.localStorage; }
+        get history() { return window.history; }
+        get navigator() { return navigator; }
+        get window() { return window; }
+        get document() { return document; }
+    }
+    let currentEnvironment = new DefaultEnvironment();
+    const env = new Proxy({}, {
+        get(_target, prop) {
+            return currentEnvironment[prop];
+        },
+    });
+
     const fullTagList = [
         "chip", "chipwave", "customchip", "fm", "fm4op", "fm6op", "pwm", "supersaw", "pickedstring", "harmonics", "spectrum", "noise", "drumset",
         "featured", "novelty",
@@ -1308,6 +1560,7 @@ var EditorConfig = (function (exports) {
         "beepbox", "jummbox", "ultrabox", "sandbox", "midbox", "abyssbox", "awesomebox", "lemmbox", "bulbbox", "slarmoo’sbox", "unbox"
     ];
     const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini|android|ipad|playbook|silk/i.test(navigator.userAgent);
+    const isMobileEnv = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini|android|ipad|playbook|silk/i.test(env.userAgent);
     function prettyNumber(value) {
         return value.toFixed(2).replace(/\.?0*$/, "");
     }
@@ -1346,8 +1599,11 @@ var EditorConfig = (function (exports) {
             return null;
         }
         static instrumentToPreset(instrument) {
-            var _a;
-            return (_a = EditorConfig.presetCategories[0].presets.dictionary) === null || _a === void 0 ? void 0 : _a[TypePresets === null || TypePresets === void 0 ? void 0 : TypePresets[instrument]];
+            for (const preset of EditorConfig.presetCategories[0].presets) {
+                if (preset.customType === instrument)
+                    return preset;
+            }
+            return null;
         }
     }
     EditorConfig.version = "1.0.0 Beta 2";
@@ -1370,6 +1626,7 @@ var EditorConfig = (function (exports) {
                 { id: 8, name: TypePresets[8], customType: 8 },
                 { id: 9, name: TypePresets[9], customType: 9 },
                 { id: 10, name: TypePresets[11], customType: 11 },
+                { id: 12, name: TypePresets[12], customType: 12 },
             ])
         },
         {
@@ -4024,6 +4281,7 @@ var EditorConfig = (function (exports) {
     exports.EditorConfig = EditorConfig;
     exports.fullTagList = fullTagList;
     exports.isMobile = isMobile;
+    exports.isMobileEnv = isMobileEnv;
     exports.prettyNumber = prettyNumber;
 
     Object.defineProperty(exports, '__esModule', { value: true });

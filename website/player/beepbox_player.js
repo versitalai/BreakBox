@@ -1,6 +1,232 @@
 var beepbox = (function (exports) {
     'use strict';
 
+    var __awaiter$1 = (exports && exports.__awaiter) || function (thisArg, _arguments, P, generator) {
+        function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
+        return new (P || (P = Promise))(function (resolve, reject) {
+            function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
+            function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
+            function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
+            step((generator = generator.apply(thisArg, _arguments || [])).next());
+        });
+    };
+    const DB_NAME = "BreakBoxSampleLibrary";
+    const DB_VERSION = 1;
+    const STORE_NAME = "samples";
+    const LS_KEY = "bb_sample_meta";
+    const EMBED_PER_SAMPLE_LIMIT = 51200;
+    const EMBED_TOTAL_LIMIT = 204800;
+    class LocalSampleLibrary {
+        static isLocalUrl(url) {
+            return url.startsWith("local:");
+        }
+        static hashFromUrl(url) {
+            return url.slice(6);
+        }
+        static makeUrl(hash) {
+            return "local:" + hash;
+        }
+        static getFilename(hash) {
+            var _a, _b;
+            return (_b = (_a = LocalSampleLibrary._cache[hash]) === null || _a === void 0 ? void 0 : _a.name) !== null && _b !== void 0 ? _b : hash;
+        }
+        static getSizeSync(hash) {
+            var _a, _b;
+            return (_b = (_a = LocalSampleLibrary._cache[hash]) === null || _a === void 0 ? void 0 : _a.size) !== null && _b !== void 0 ? _b : 0;
+        }
+        static getMimeSync(hash) {
+            var _a, _b;
+            return (_b = (_a = LocalSampleLibrary._cache[hash]) === null || _a === void 0 ? void 0 : _a.mime) !== null && _b !== void 0 ? _b : "audio/wav";
+        }
+        static computeHash(buffer) {
+            return __awaiter$1(this, void 0, void 0, function* () {
+                const hashBuf = yield crypto.subtle.digest("SHA-256", buffer);
+                return Array.from(new Uint8Array(hashBuf))
+                    .map(b => b.toString(16).padStart(2, "0"))
+                    .join("")
+                    .slice(0, 16);
+            });
+        }
+        static store(file) {
+            return __awaiter$1(this, void 0, void 0, function* () {
+                const buffer = yield file.arrayBuffer();
+                const hash = yield LocalSampleLibrary.computeHash(buffer);
+                const mime = file.type || "audio/wav";
+                const db = yield LocalSampleLibrary._open();
+                yield new Promise((resolve, reject) => {
+                    const tx = db.transaction(STORE_NAME, "readwrite");
+                    tx.objectStore(STORE_NAME).put({ hash, filename: file.name, size: file.size, mimeType: mime, dateAdded: Date.now(), data: buffer });
+                    tx.oncomplete = () => resolve();
+                    tx.onerror = () => reject(tx.error);
+                });
+                db.close();
+                LocalSampleLibrary._cache[hash] = { name: file.name, size: file.size, mime };
+                LocalSampleLibrary._saveCache();
+                return hash;
+            });
+        }
+        static load(hash) {
+            return __awaiter$1(this, void 0, void 0, function* () {
+                const db = yield LocalSampleLibrary._open();
+                return new Promise(resolve => {
+                    const req = db.transaction(STORE_NAME, "readonly").objectStore(STORE_NAME).get(hash);
+                    req.onsuccess = () => { var _a, _b; db.close(); resolve((_b = (_a = req.result) === null || _a === void 0 ? void 0 : _a.data) !== null && _b !== void 0 ? _b : null); };
+                    req.onerror = () => { db.close(); resolve(null); };
+                });
+            });
+        }
+        static list() {
+            return __awaiter$1(this, void 0, void 0, function* () {
+                const db = yield LocalSampleLibrary._open();
+                return new Promise(resolve => {
+                    const req = db.transaction(STORE_NAME, "readonly").objectStore(STORE_NAME).getAll();
+                    req.onsuccess = () => {
+                        var _a;
+                        db.close();
+                        resolve(((_a = req.result) !== null && _a !== void 0 ? _a : []).map(({ hash, filename, size, mimeType, dateAdded }) => ({ hash, filename, size, mimeType, dateAdded })));
+                    };
+                    req.onerror = () => { db.close(); resolve([]); };
+                });
+            });
+        }
+        static remove(hash) {
+            return __awaiter$1(this, void 0, void 0, function* () {
+                const db = yield LocalSampleLibrary._open();
+                yield new Promise((resolve, reject) => {
+                    const tx = db.transaction(STORE_NAME, "readwrite");
+                    tx.objectStore(STORE_NAME).delete(hash);
+                    tx.oncomplete = () => resolve();
+                    tx.onerror = () => reject(tx.error);
+                });
+                db.close();
+                delete LocalSampleLibrary._cache[hash];
+                LocalSampleLibrary._saveCache();
+            });
+        }
+        static toDataUrl(hash) {
+            return __awaiter$1(this, void 0, void 0, function* () {
+                const buffer = yield LocalSampleLibrary.load(hash);
+                if (buffer == null)
+                    return null;
+                const mime = LocalSampleLibrary.getMimeSync(hash);
+                const bytes = new Uint8Array(buffer);
+                let binary = "";
+                const chunk = 8192;
+                for (let i = 0; i < bytes.length; i += chunk) {
+                    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+                }
+                return `data:${mime};base64,${btoa(binary)}`;
+            });
+        }
+        static classifyLocalSamples(sampleUrls) {
+            const embeddable = [];
+            const oversized = [];
+            let totalBytes = 0;
+            const locals = [];
+            for (const urlEntry of sampleUrls) {
+                let bare = urlEntry;
+                if (bare.startsWith("!")) {
+                    const end = bare.indexOf("!", 1);
+                    if (end !== -1)
+                        bare = bare.slice(end + 1);
+                }
+                if (!LocalSampleLibrary.isLocalUrl(bare))
+                    continue;
+                const hash = LocalSampleLibrary.hashFromUrl(bare);
+                const size = LocalSampleLibrary.getSizeSync(hash);
+                const filename = LocalSampleLibrary.getFilename(hash);
+                locals.push({ hash, size, filename });
+            }
+            for (const l of locals) {
+                if (l.size > EMBED_PER_SAMPLE_LIMIT) {
+                    oversized.push(Object.assign(Object.assign({}, l), { reason: "size" }));
+                }
+                else {
+                    totalBytes += l.size;
+                }
+            }
+            if (totalBytes > EMBED_TOTAL_LIMIT) {
+                const okSamples = locals.filter(l => l.size <= EMBED_PER_SAMPLE_LIMIT)
+                    .sort((a, b) => b.size - a.size);
+                totalBytes = 0;
+                for (const s of okSamples) {
+                    if (totalBytes + s.size <= EMBED_TOTAL_LIMIT) {
+                        embeddable.push(s.hash);
+                        totalBytes += s.size;
+                    }
+                    else {
+                        oversized.push(Object.assign(Object.assign({}, s), { reason: "total" }));
+                    }
+                }
+            }
+            else {
+                for (const l of locals.filter(l => l.size <= EMBED_PER_SAMPLE_LIMIT)) {
+                    embeddable.push(l.hash);
+                }
+            }
+            return { embeddable, oversized, totalEmbedBytes: totalBytes };
+        }
+        static buildShareableSampleList(sampleUrls, embeddable) {
+            return __awaiter$1(this, void 0, void 0, function* () {
+                const allowed = new Set(embeddable);
+                const result = [];
+                for (const urlEntry of sampleUrls) {
+                    let optionsPrefix = "";
+                    let bare = urlEntry;
+                    if (bare.startsWith("!")) {
+                        const end = bare.indexOf("!", 1);
+                        if (end !== -1) {
+                            optionsPrefix = bare.slice(0, end + 1);
+                            bare = bare.slice(end + 1);
+                        }
+                    }
+                    if (LocalSampleLibrary.isLocalUrl(bare)) {
+                        const hash = LocalSampleLibrary.hashFromUrl(bare);
+                        const size = LocalSampleLibrary.getSizeSync(hash);
+                        if (size > 0 && allowed.has(hash)) {
+                            const dataUrl = yield LocalSampleLibrary.toDataUrl(hash);
+                            if (dataUrl != null) {
+                                result.push(optionsPrefix + dataUrl);
+                                continue;
+                            }
+                        }
+                    }
+                    result.push(urlEntry);
+                }
+                return result;
+            });
+        }
+        static _open() {
+            return new Promise((resolve, reject) => {
+                const req = indexedDB.open(DB_NAME, DB_VERSION);
+                req.onupgradeneeded = (e) => {
+                    const db = e.target.result;
+                    if (!db.objectStoreNames.contains(STORE_NAME)) {
+                        db.createObjectStore(STORE_NAME, { keyPath: "hash" });
+                    }
+                };
+                req.onsuccess = () => resolve(req.result);
+                req.onerror = () => reject(req.error);
+            });
+        }
+        static _loadCache() {
+            try {
+                const raw = localStorage.getItem(LS_KEY);
+                if (raw)
+                    return JSON.parse(raw);
+            }
+            catch (_a) { }
+            return {};
+        }
+        static _saveCache() {
+            try {
+                localStorage.setItem(LS_KEY, JSON.stringify(LocalSampleLibrary._cache));
+            }
+            catch (_a) { }
+        }
+    }
+    LocalSampleLibrary._cache = LocalSampleLibrary._loadCache();
+
     /*!
     Copyright (c) 2012-2022 John Nesky and contributing authors
 
@@ -32,7 +258,7 @@ var beepbox = (function (exports) {
         });
     };
     var _a$1;
-    const TypePresets = ["chip", "FM", "noise", "spectrum", "drumset", "harmonics", "pulse width", "picked string", "supersaw", "chip (custom)", "mod", "FM (6-op)"];
+    const TypePresets = ["chip", "FM", "noise", "spectrum", "drumset", "harmonics", "pulse width", "picked string", "supersaw", "chip (custom)", "mod", "FM (6-op)", "sample trigger"];
     class SampleLoadingState {
         constructor() {
             this.statusTable = {};
@@ -62,6 +288,40 @@ var beepbox = (function (exports) {
             const chipWave = Config.chipWaves[chipWaveIndex];
             const rawChipWave = Config.rawChipWaves[chipWaveIndex];
             const rawRawChipWave = Config.rawRawChipWaves[chipWaveIndex];
+            if (url.startsWith("local:")) {
+                const hash = url.slice(6);
+                const buffer = yield LocalSampleLibrary.load(hash);
+                if (buffer == null) {
+                    sampleLoadingState.statusTable[chipWaveIndex] = 2;
+                    alert("Local sample not found: " + (LocalSampleLibrary.getFilename(hash) || hash) + ".\nPlease re-upload it via the Add Samples dialog.");
+                    sampleLoaderAudioContext.close();
+                    return;
+                }
+                try {
+                    const audioBuffer = yield sampleLoaderAudioContext.decodeAudioData(buffer.slice(0));
+                    const samples = centerWave(Array.from(audioBuffer.getChannelData(0)));
+                    const integratedSamples = performIntegral(samples);
+                    chipWave.samples = integratedSamples;
+                    rawChipWave.samples = samples;
+                    rawRawChipWave.samples = samples;
+                    if (rawLoopOptions["isUsingAdvancedLoopControls"]) {
+                        presetSettings["chipWaveLoopStart"] = rawLoopOptions["chipWaveLoopStart"] != null ? rawLoopOptions["chipWaveLoopStart"] : 0;
+                        presetSettings["chipWaveLoopEnd"] = rawLoopOptions["chipWaveLoopEnd"] != null ? rawLoopOptions["chipWaveLoopEnd"] : samples.length - 1;
+                        presetSettings["chipWaveLoopMode"] = rawLoopOptions["chipWaveLoopMode"] != null ? rawLoopOptions["chipWaveLoopMode"] : 0;
+                        presetSettings["chipWavePlayBackwards"] = rawLoopOptions["chipWavePlayBackwards"];
+                        presetSettings["chipWaveStartOffset"] = rawLoopOptions["chipWaveStartOffset"] != null ? rawLoopOptions["chipWaveStartOffset"] : 0;
+                    }
+                    sampleLoadingState.samplesLoaded++;
+                    sampleLoadingState.statusTable[chipWaveIndex] = 1;
+                    sampleLoadEvents.dispatchEvent(new SampleLoadedEvent(sampleLoadingState.totalSamples, sampleLoadingState.samplesLoaded));
+                }
+                catch (error) {
+                    sampleLoadingState.statusTable[chipWaveIndex] = 2;
+                    alert("Failed to decode local sample " + (LocalSampleLibrary.getFilename(hash) || hash) + ":\n" + error);
+                }
+                sampleLoaderAudioContext.close();
+                return;
+            }
             if (OFFLINE) {
                 if (url.slice(0, 5) === "file:") {
                     const dirname = yield getDirname();
@@ -549,7 +809,6 @@ var beepbox = (function (exports) {
         { name: "No Dabbing (MB)", realName: "no dabbing", flags: [true, true, false, true, true, true, true, true, true, false, true, false] },
         { name: "Jacked Toad (TB)", realName: "jacked toad", flags: [true, false, true, true, false, true, true, true, true, false, true, true] },
         { name: "Test Scale (TB)", realName: "**t", flags: [true, true, false, false, false, true, true, false, false, true, true, false] },
-        { name: "Test Scale (TB)", realName: "**t", flags: [true, true, false, false, false, true, true, false, false, true, true, false] },
         { name: "Custom", realName: "custom", flags: [true, false, false, true, false, false, false, false, false, true, true, false] },
     ]);
     Config.keys = toNameMap([
@@ -607,8 +866,8 @@ var beepbox = (function (exports) {
         { name: "÷12", stepsPerBeat: 12, roundUpThresholds: null },
         { name: "freehand (÷24)", stepsPerBeat: 24, roundUpThresholds: null },
     ]);
-    Config.instrumentTypeNames = ["chip", "FM", "noise", "spectrum", "drumset", "harmonics", "PWM", "Picked String", "supersaw", "custom chip", "mod", "FM6op"];
-    Config.instrumentTypeHasSpecialInterval = [true, true, false, false, false, true, false, false, false, false, false];
+    Config.instrumentTypeNames = ["chip", "FM", "noise", "spectrum", "drumset", "harmonics", "PWM", "Picked String", "supersaw", "custom chip", "mod", "FM6op", "sample trigger"];
+    Config.instrumentTypeHasSpecialInterval = [true, true, false, false, false, true, false, false, false, false, false, false, false];
     Config.chipBaseExpression = 0.03375;
     Config.fmBaseExpression = 0.03;
     Config.noiseBaseExpression = 0.19;
@@ -9590,7 +9849,123 @@ var beepbox = (function (exports) {
     ]);
     ColorConfig._styleElement = document.head.appendChild(HTML.style({ type: "text/css" }));
 
+    class InstrumentTypeRegistry {
+        constructor() {
+            this.specs = new Map();
+        }
+        register(spec) {
+            this.specs.set(spec.type, spec);
+        }
+        get(type) {
+            const spec = this.specs.get(type);
+            if (spec === undefined) {
+                throw new Error("Unrecognized instrument type: " + type);
+            }
+            return spec;
+        }
+        has(type) {
+            return this.specs.has(type);
+        }
+        getAll() {
+            return Array.from(this.specs.entries())
+                .sort((a, b) => a[0] - b[0])
+                .map(e => e[1]);
+        }
+    }
+    const instrumentTypeRegistry = new InstrumentTypeRegistry();
+
+    const chipSpec = {
+        type: 0,
+        isNoise: false,
+        hasSpecialInterval: false,
+        isChipLike: true,
+        displayName: Config.instrumentTypeNames[0],
+        applyDefaults: (instrument, isNoiseChannel) => {
+            instrument.chipWave = 2;
+            instrument.chord = Config.chords.dictionary["arpeggio"].index;
+            instrument.isUsingAdvancedLoopControls = false;
+            instrument.chipWaveLoopStart = 0;
+            instrument.chipWaveLoopEnd = Config.rawRawChipWaves[instrument.chipWave].samples.length - 1;
+            instrument.chipWaveLoopMode = 0;
+            instrument.chipWavePlayBackwards = false;
+            instrument.chipWaveStartOffset = 0;
+        },
+    };
+    instrumentTypeRegistry.register(chipSpec);
+
+    const fmSpec = {
+        type: 1,
+        isNoise: false,
+        hasSpecialInterval: false,
+        isChipLike: false,
+        displayName: Config.instrumentTypeNames[1],
+        applyDefaults: (instrument, isNoiseChannel) => {
+            instrument.chord = Config.chords.dictionary["custom interval"].index;
+            instrument.algorithm = 0;
+            instrument.feedbackType = 0;
+            instrument.feedbackAmplitude = 0;
+            for (let i = 0; i < instrument.operators.length; i++) {
+                instrument.operators[i].reset(i);
+            }
+        },
+    };
+    instrumentTypeRegistry.register(fmSpec);
+
+    const noiseSpec = {
+        type: 2,
+        isNoise: true,
+        hasSpecialInterval: false,
+        isChipLike: false,
+        displayName: Config.instrumentTypeNames[2],
+        applyDefaults: (instrument, isNoiseChannel) => {
+            instrument.chipNoise = 1;
+            instrument.chord = Config.chords.dictionary["arpeggio"].index;
+        },
+    };
+    instrumentTypeRegistry.register(noiseSpec);
+
+    const spectrumSpec = {
+        type: 3,
+        isNoise: false,
+        hasSpecialInterval: false,
+        isChipLike: false,
+        displayName: Config.instrumentTypeNames[3],
+        applyDefaults: (instrument, isNoiseChannel) => {
+            instrument.chord = Config.chords.dictionary["simultaneous"].index;
+            instrument.spectrumWave.reset(isNoiseChannel);
+        },
+    };
+    instrumentTypeRegistry.register(spectrumSpec);
+
+    class DefaultEnvironment {
+        get isOffline() {
+            try {
+                return (typeof globalThis.OFFLINE !== 'undefined') ? !!globalThis.OFFLINE : false;
+            }
+            catch (_a) {
+                return false;
+            }
+        }
+        get userAgent() { return navigator.userAgent; }
+        get platform() { return navigator.platform; }
+        get baseURI() { return document.baseURI || location.href; }
+        get locationHash() { return window.location.hash; }
+        get sessionStorage() { return window.sessionStorage; }
+        get localStorage() { return window.localStorage; }
+        get history() { return window.history; }
+        get navigator() { return navigator; }
+        get window() { return window; }
+        get document() { return document; }
+    }
+    let currentEnvironment = new DefaultEnvironment();
+    const env = new Proxy({}, {
+        get(_target, prop) {
+            return currentEnvironment[prop];
+        },
+    });
+
     /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini|android|ipad|playbook|silk/i.test(navigator.userAgent);
+    /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini|android|ipad|playbook|silk/i.test(env.userAgent);
     class EditorConfig {
         static valueToPreset(presetID) {
             for (let categoryIndex = 0; categoryIndex < EditorConfig.presetCategories.length; categoryIndex++) {
@@ -9626,8 +10001,11 @@ var beepbox = (function (exports) {
             return null;
         }
         static instrumentToPreset(instrument) {
-            var _a;
-            return (_a = EditorConfig.presetCategories[0].presets.dictionary) === null || _a === void 0 ? void 0 : _a[TypePresets === null || TypePresets === void 0 ? void 0 : TypePresets[instrument]];
+            for (const preset of EditorConfig.presetCategories[0].presets) {
+                if (preset.customType === instrument)
+                    return preset;
+            }
+            return null;
         }
     }
     EditorConfig.version = "1.0.0 Beta 2";
@@ -9650,6 +10028,7 @@ var beepbox = (function (exports) {
                 { id: 8, name: TypePresets[8], customType: 8 },
                 { id: 9, name: TypePresets[9], customType: 9 },
                 { id: 10, name: TypePresets[11], customType: 11 },
+                { id: 12, name: TypePresets[12], customType: 12 },
             ])
         },
         {
@@ -12301,6 +12680,30 @@ var beepbox = (function (exports) {
         },
     ]);
 
+    class InstrumentExtensionRegistry {
+        constructor() {
+            this.extensions = new Map();
+        }
+        register(extension) {
+            this.extensions.set(extension.id, extension);
+        }
+        get(id) {
+            return this.extensions.get(id);
+        }
+        has(id) {
+            return this.extensions.has(id);
+        }
+        getAll() {
+            return Array.from(this.extensions.values());
+        }
+        getOrderedIds() {
+            return Array.from(this.extensions.entries())
+                .sort((a, b) => { var _a, _b; return ((_a = b[1].priority) !== null && _a !== void 0 ? _a : 0) - ((_b = a[1].priority) !== null && _b !== void 0 ? _b : 0); })
+                .map(e => e[0]);
+        }
+    }
+    const instrumentExtensionRegistry = new InstrumentExtensionRegistry();
+
     function scaleElementsByFactor(array, factor) {
         for (let i = 0; i < array.length; i++) {
             array[i] *= factor;
@@ -12401,148 +12804,6 @@ var beepbox = (function (exports) {
         }
         reverseIndexBits(array, fullArrayLength);
     }
-
-    class Deque {
-        constructor() {
-            this._capacity = 1;
-            this._buffer = [undefined];
-            this._mask = 0;
-            this._offset = 0;
-            this._count = 0;
-        }
-        pushFront(element) {
-            if (this._count >= this._capacity)
-                this._expandCapacity();
-            this._offset = (this._offset - 1) & this._mask;
-            this._buffer[this._offset] = element;
-            this._count++;
-        }
-        pushBack(element) {
-            if (this._count >= this._capacity)
-                this._expandCapacity();
-            this._buffer[(this._offset + this._count) & this._mask] = element;
-            this._count++;
-        }
-        popFront() {
-            if (this._count <= 0)
-                throw new Error("No elements left to pop.");
-            const element = this._buffer[this._offset];
-            this._buffer[this._offset] = undefined;
-            this._offset = (this._offset + 1) & this._mask;
-            this._count--;
-            return element;
-        }
-        popBack() {
-            if (this._count <= 0)
-                throw new Error("No elements left to pop.");
-            this._count--;
-            const index = (this._offset + this._count) & this._mask;
-            const element = this._buffer[index];
-            this._buffer[index] = undefined;
-            return element;
-        }
-        peakFront() {
-            if (this._count <= 0)
-                throw new Error("No elements left to pop.");
-            return this._buffer[this._offset];
-        }
-        peakBack() {
-            if (this._count <= 0)
-                throw new Error("No elements left to pop.");
-            return this._buffer[(this._offset + this._count - 1) & this._mask];
-        }
-        count() {
-            return this._count;
-        }
-        set(index, element) {
-            if (index < 0 || index >= this._count)
-                throw new Error("Invalid index");
-            this._buffer[(this._offset + index) & this._mask] = element;
-        }
-        get(index) {
-            if (index < 0 || index >= this._count)
-                throw new Error("Invalid index");
-            return this._buffer[(this._offset + index) & this._mask];
-        }
-        remove(index) {
-            if (index < 0 || index >= this._count)
-                throw new Error("Invalid index");
-            if (index <= (this._count >> 1)) {
-                while (index > 0) {
-                    this.set(index, this.get(index - 1));
-                    index--;
-                }
-                this.popFront();
-            }
-            else {
-                index++;
-                while (index < this._count) {
-                    this.set(index - 1, this.get(index));
-                    index++;
-                }
-                this.popBack();
-            }
-        }
-        _expandCapacity() {
-            if (this._capacity >= 0x40000000)
-                throw new Error("Capacity too big.");
-            this._capacity = this._capacity << 1;
-            const oldBuffer = this._buffer;
-            const newBuffer = new Array(this._capacity);
-            const size = this._count | 0;
-            const offset = this._offset | 0;
-            for (let i = 0; i < size; i++) {
-                newBuffer[i] = oldBuffer[(offset + i) & this._mask];
-            }
-            for (let i = size; i < this._capacity; i++) {
-                newBuffer[i] = undefined;
-            }
-            this._offset = 0;
-            this._buffer = newBuffer;
-            this._mask = this._capacity - 1;
-        }
-    }
-
-    class EventManager {
-        constructor() {
-            this.activeEvents = [];
-            this.listeners = {};
-            this.activeEvents = [];
-            this.listeners = {};
-        }
-        raise(eventType, eventData, extraEventData) {
-            if (this.listeners[eventType] == undefined) {
-                return;
-            }
-            this.activeEvents.push(eventType);
-            for (let i = 0; i < this.listeners[eventType].length; i++) {
-                this.listeners[eventType][i](eventData, extraEventData);
-            }
-            this.activeEvents.pop();
-        }
-        listen(eventType, callback) {
-            if (this.listeners[eventType] == undefined) {
-                this.listeners[eventType] = [];
-            }
-            this.listeners[eventType].push(callback);
-        }
-        unlisten(eventType, callback) {
-            if (this.listeners[eventType] == undefined) {
-                return;
-            }
-            const lisen = this.listeners[eventType].indexOf(callback);
-            if (lisen != -1) {
-                this.listeners[eventType].splice(lisen, 1);
-            }
-        }
-        unlistenAll(eventType) {
-            if (this.listeners[eventType] == undefined) {
-                return;
-            }
-            this.listeners[eventType] = [];
-        }
-    }
-    const events = new EventManager();
 
     class FilterCoefficients {
         constructor() {
@@ -12746,172 +13007,6 @@ var beepbox = (function (exports) {
         return 2.0 * Math.atan(radians * 0.5);
     }
 
-    const PRIME32_1 = 2654435761;
-    const PRIME32_2 = 2246822519;
-    const PRIME32_3 = 3266489917;
-    const PRIME32_4 = 668265263;
-    const PRIME32_5 = 374761393;
-    let encoder;
-    /**
-     *
-     * @param input - byte array or string
-     * @param seed - optional seed (32-bit unsigned);
-     */
-    function xxHash32(input, seed = 0) {
-        const buffer = typeof input === 'string' ? (encoder ??= new TextEncoder()).encode(input) : input;
-        const b = buffer;
-        /*
-            Step 1. Initialize internal accumulators
-            Each accumulator gets an initial value based on optional seed input. Since the seed is optional, it can be 0.
-
-            ```
-                u32 acc1 = seed + PRIME32_1 + PRIME32_2;
-                u32 acc2 = seed + PRIME32_2;
-                u32 acc3 = seed + 0;
-                u32 acc4 = seed - PRIME32_1;
-            ```
-            Special case : input is less than 16 bytes
-            When input is too small (< 16 bytes), the algorithm will not process any stripe. Consequently, it will not
-            make use of parallel accumulators.
-
-            In which case, a simplified initialization is performed, using a single accumulator :
-
-            u32 acc  = seed + PRIME32_5;
-            The algorithm then proceeds directly to step 4.
-        */
-        let acc = (seed + PRIME32_5) & 0xffffffff;
-        let offset = 0;
-        if (b.length >= 16) {
-            const accN = [
-                (seed + PRIME32_1 + PRIME32_2) & 0xffffffff,
-                (seed + PRIME32_2) & 0xffffffff,
-                (seed + 0) & 0xffffffff,
-                (seed - PRIME32_1) & 0xffffffff,
-            ];
-            /*
-                Step 2. Process stripes
-                A stripe is a contiguous segment of 16 bytes. It is evenly divided into 4 lanes, of 4 bytes each.
-                The first lane is used to update accumulator 1, the second lane is used to update accumulator 2, and so on.
-
-                Each lane read its associated 32-bit value using little-endian convention.
-
-                For each {lane, accumulator}, the update process is called a round, and applies the following formula :
-
-                ```
-                accN = accN + (laneN * PRIME32_2);
-                accN = accN <<< 13;
-                accN = accN * PRIME32_1;
-                ```
-
-                This shuffles the bits so that any bit from input lane impacts several bits in output accumulator.
-                All operations are performed modulo 2^32.
-
-                Input is consumed one full stripe at a time. Step 2 is looped as many times as necessary to consume
-                the whole input, except the last remaining bytes which cannot form a stripe (< 16 bytes). When that
-                happens, move to step 3.
-            */
-            const b = buffer;
-            const limit = b.length - 16;
-            let lane = 0;
-            for (offset = 0; (offset & 0xfffffff0) <= limit; offset += 4) {
-                const i = offset;
-                const laneN0 = b[i + 0] + (b[i + 1] << 8);
-                const laneN1 = b[i + 2] + (b[i + 3] << 8);
-                const laneNP = laneN0 * PRIME32_2 + ((laneN1 * PRIME32_2) << 16);
-                let acc = (accN[lane] + laneNP) & 0xffffffff;
-                acc = (acc << 13) | (acc >>> 19);
-                const acc0 = acc & 0xffff;
-                const acc1 = acc >>> 16;
-                accN[lane] = (acc0 * PRIME32_1 + ((acc1 * PRIME32_1) << 16)) & 0xffffffff;
-                lane = (lane + 1) & 0x3;
-            }
-            /*
-                Step 3. Accumulator convergence
-                All 4 lane accumulators from previous steps are merged to produce a single remaining accumulator
-                of same width (32-bit). The associated formula is as follows :
-
-                ```
-                acc = (acc1 <<< 1) + (acc2 <<< 7) + (acc3 <<< 12) + (acc4 <<< 18);
-                ```
-            */
-            acc =
-                (((accN[0] << 1) | (accN[0] >>> 31)) +
-                    ((accN[1] << 7) | (accN[1] >>> 25)) +
-                    ((accN[2] << 12) | (accN[2] >>> 20)) +
-                    ((accN[3] << 18) | (accN[3] >>> 14))) &
-                    0xffffffff;
-        }
-        /*
-            Step 4. Add input length
-            The input total length is presumed known at this stage. This step is just about adding the length to
-            accumulator, so that it participates to final mixing.
-
-            ```
-            acc = acc + (u32)inputLength;
-            ```
-        */
-        acc = (acc + buffer.length) & 0xffffffff;
-        /*
-            Step 5. Consume remaining input
-            There may be up to 15 bytes remaining to consume from the input. The final stage will digest them according
-            to following pseudo-code :
-            ```
-            while (remainingLength >= 4) {
-                lane = read_32bit_little_endian(input_ptr);
-                acc = acc + lane * PRIME32_3;
-                acc = (acc <<< 17) * PRIME32_4;
-                input_ptr += 4; remainingLength -= 4;
-            }
-            ```
-            This process ensures that all input bytes are present in the final mix.
-        */
-        const limit = buffer.length - 4;
-        for (; offset <= limit; offset += 4) {
-            const i = offset;
-            const laneN0 = b[i + 0] + (b[i + 1] << 8);
-            const laneN1 = b[i + 2] + (b[i + 3] << 8);
-            const laneP = laneN0 * PRIME32_3 + ((laneN1 * PRIME32_3) << 16);
-            acc = (acc + laneP) & 0xffffffff;
-            acc = (acc << 17) | (acc >>> 15);
-            acc = ((acc & 0xffff) * PRIME32_4 + (((acc >>> 16) * PRIME32_4) << 16)) & 0xffffffff;
-        }
-        /*
-            ```
-            while (remainingLength >= 1) {
-                lane = read_byte(input_ptr);
-                acc = acc + lane * PRIME32_5;
-                acc = (acc <<< 11) * PRIME32_1;
-                input_ptr += 1; remainingLength -= 1;
-            }
-            ```
-        */
-        for (; offset < b.length; ++offset) {
-            const lane = b[offset];
-            acc = acc + lane * PRIME32_5;
-            acc = (acc << 11) | (acc >>> 21);
-            acc = ((acc & 0xffff) * PRIME32_1 + (((acc >>> 16) * PRIME32_1) << 16)) & 0xffffffff;
-        }
-        /*
-            Step 6. Final mix (avalanche)
-            The final mix ensures that all input bits have a chance to impact any bit in the output digest,
-            resulting in an unbiased distribution. This is also called avalanche effect.
-            ```
-            acc = acc xor (acc >> 15);
-            acc = acc * PRIME32_2;
-            acc = acc xor (acc >> 13);
-            acc = acc * PRIME32_3;
-            acc = acc xor (acc >> 16);
-            ```
-        */
-        acc = acc ^ (acc >>> 15);
-        acc = (((acc & 0xffff) * PRIME32_2) & 0xffffffff) + (((acc >>> 16) * PRIME32_2) << 16);
-        acc = acc ^ (acc >>> 13);
-        acc = (((acc & 0xffff) * PRIME32_3) & 0xffffffff) + (((acc >>> 16) * PRIME32_3) << 16);
-        acc = acc ^ (acc >>> 16);
-        // turn any negatives back into a positive number;
-        return acc < 0 ? acc + 4294967296 : acc;
-    }
-
     function updateFromJukeBox4(oldID) {
         const newList = [0, 9, 6, 8, 1, 10, 2, 5, 7, 3, 2, 3, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199, 200, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213, 214, 215, 216, 217, 218, 219, 220, 221, 222, 223, 224, 225, 226, 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 264, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 250, 290, 291, 292, 293, 294, 295, 296, 297, 422, 298, 299, 300, 301, 302, 303, 304, 305, 306, 307, 308, 309, 310, 311, 312, 313, 314, 315, 316, 317, 318, 319, 320, 321, 322, 323, 324, 325, 326, 327, 328, 329, 330, 331, 332, 333, 334, 335, 336, 337, 338, 339, 340, 341, 342, 343, 344, 345, 346, 347, 348, 349, 350, 351, 352, 353, 354, 355, 356, 357, 358, 359, 360, 361, 362, 363, 364, 365, 366, 367, 368, 369, 370, 371, 372, 373, 374, 375, 376, 377, 378, 379, 380, 381, 382, 383, 384, 385, 386, 387, 388, 389, 390, 391, 392, 393, 394, 395, 396, 397, 398, 399, 400, 401, 402, 403, 404, 405, 425, 406, 407, 408, 409, 410, 411, 412, 413, 414, 415, 416, 417, 418, 419, 420, 421, 423, 424, 426, 427, 428, 429, 430, 431, 432, 433, 434, 435, 436, 437, 438, 439, 440, 441, 442, 443, 283, 445, 446, 447, 448, 449, 450, 451, 452, 453, 454, 455, 456, 457, 458, 459, 460, 461, 462, 463, 464, 465, 466, 467, 468, 469, 470, 471, 472, 473, 474, 475, 476, 477, 478, 479, 480, 481, 482, 483, 484, 485, 486, 487, 488, 489, 490, 491, 492, 493, 494, 495, 496, 497, 498, 499, 500, 501, 502, 503, 504, 505, 506, 507, 508, 509, 510, 511, 512, 513, 514, 515, 516, 517, 518, 519, 520, 521, 522, 523, 524, 525, 526, 527, 528, 529, 530, 531, 532, 533, 534, 535, 536, 537, 538, 539, 540, 541, 542, 543, 544, 545, 546, 547, 548, 549, 550, 551, 552, 553, 554, 555, 556, 557, 558, 559, 560, 561, 562, 563, 564, 565, 566, 567, 568, 569, 570, 571, 572, 573, 574, 575, 576, 577, 578, 579, 580, 581, 582, 583, 584, 585, 586, 587, 588, 589, 590, 591, 592, 593, 594, 595, 596, 597, 598, 599, 600, 601, 602, 603, 604, 605, 606, 607, 608, 609, 610, 611, 612, 613, 614, 615, 616, 617, 618, 619, 620, 621, 622, 623, 624, 625, 626, 627, 628, 629, 630, 631, 612, 633, 634, 635, 636, 637, 638, 639, 640, 641, 642, 643, 644, 645, 646, 647, 648, 649, 650, 651, 652, 653, 654, 655, 656, 657, 658, 659, 660, 661, 662, 663, 664, 665, 666, 667, 668, 669, 670, 671, 672, 673, 674, 675, 676, 677, 678, 679, 680, 681, 682, 683, 684, 685, 686, 687, 688, 689, 690, 691, 692, 693, 694, 695, 696, 697, 698, 699, 700, 701, 702, 703, 704, 705, 706, 707, 708, 709, 710, 711, 712, 713, 714, 715, 716, 717, 718, 719, 720, 721, 722, 723, 724, 725, 726, 727, 728, 729, 730, 731, 732, 733, 734, 735, 736, 737, 738, 739, 740, 741, 742, 743, 744, 745, 746, 747, 748, 749, 750, 751, 752, 753, 754, 755, 756, 757, 758, 759, 760, 761, 762, 763, 764, 765, 766, 767, 768, 769, 770, 771, 772, 773, 774, 775, 776, 777, 778, 779, 780, 781, 782, 783, 784, 785, 786, 787, 788, 789, 790, 791, 792, 793, 794, 795, 796, 797, 798, 799, 800, 801, 802, 803, 804, 805, 806, 807, 808, 809, 810, 811, 812, 813, 814, 815, 816, 817, 818, 819, 820, 821, 822, 823, 824, 825, 826, 827, 828, 829, 830, 831, 832, 833, 834, 1735, 835, 836, 837, 838, 839, 840, 841, 842, 843, 844, 845, 846, 847, 848, 849, 850, 851, 852, 853, 854, 855, 856, 857, 858, 859, 860, 861, 862, 863, 864, 865, 866, 867, 868, 869, 870, 871, 872, 873, 874, 875, 876, 877, 878, 879, 880, 881, 882, 883, 884, 885, 886, 887, 888, 889, 890, 891, 892, 893, 894, 895, 896, 897, 898, 899, 900, 901, 902, 903, 904, 905, 906, 907, 908, 909, 910, 911, 912, 913, 914, 915, 916, 917, 918, 919, 920, 921, 922, 923, 924, 925, 926, 927, 928, 929, 930, 931, 932, 933, 934, 935, 936, 937, 938, 939, 940, 941, 942, 943, 944, 945, 946, 947, 948, 949, 950, 951, 952, 953, 954, 955, 956, 957, 958, 959, 960, 961, 962, 963, 964, 965, 966, 967, 968, 969, 970, 971, 972, 973, 974, 975, 976, 977, 978, 979, 980, 981, 982, 983, 984, 985, 986, 987, 988, 989, 990, 991, 992, 993, 994, 995, 996, 997, 998, 999, 1000, 1001, 1002, 1003, 1004, 1005, 1006, 1007, 1008, 1009, 1010, 1011, 1012, 1013, 1014, 1015, 1016, 1017, 1018, 1019, 1020, 1021, 1022, 1023, 1024, 1025, 1026, 1027, 1028, 1029, 1030, 1031, 1032, 1033, 1034, 1035, 1036, 1037, 1038, 1039, 1040, 16777215, 1041, 1042, 1043, 1044, 1045, 1046, 1047, 1048, 1049, 1050, 1051, 1052, 1053, 1054, 1055, 1056, 1057, 1058, 1059, 1060, 1061, 1062, 1063, 1064, 1065, 1066, 1067, 1068, 1069, 1070, 1071, 1072, 1073, 1074, 1075, 1076, 1077, 1078, 1079, 1080, 1081, 1082, 1083, 1084, 1085, 1086, 1087, 1088, 1089, 1090, 1091, 1092, 1093, 1094, 1095, 1096, 1097, 1098, 1099, 1100, 1101, 1102, 1103, 1104, 1105, 1106, 1107, 1108, 1109, 1110, 1111, 1112, 1113, 1114, 1115, 1116, 1117, 1118, 1119, 1120, 1121, 1122, 1123, 1124, 1125, 1126, 1127, 1128, 1129, 1130, 1131, 1132, 1133, 1134, 1135, 1136, 1137, 1138, 1139, 1140, 1141, 1142, 1143, 1144, 1145, 1146, 1147, 1148, 1149, 1150, 1151, 1152, 1153, 1154, 1155, 1156, 1157, 1158, 1159, 1160, 1161, 1162, 1163, 1164, 1165, 1166, 1167, 1168, 1169, 1170, 1171, 1172, 1173, 1174, 1175, 1176, 1177, 1178, 1179, 1180, 1181, 1182, 1183, 1184, 1185, 1186, 1187, 1188, 1189, 1190, 1191, 1192, 1193, 1194, 1195, 1196, 1197, 1198, 1199, 1200, 1201, 1202, 1203, 1204, 1205, 1206, 1207, 1208, 1209, 1210, 1211, 1212, 1213, 1214, 1215, 1216, 1217, 1218, 1219, 1220, 1221, 1222, 1223, 16777215, 1224, 1225, 1226, 1227, 1228, 1229, 1230, 1231, 1232, 1233, 1234, 1235, 1236, 1237, 1238, 1239, 1240, 16777215, 1241, 1242, 1243, 1244, 1245, 1246, 1247, 1248, 1249, 1250, 1251, 1252, 1253, 1254, 1255, 1256, 1257, 1258, 1259, 1260, 1261, 1262, 1263, 1264, 1265, 1266, 1267, 1268, 1269, 1270, 1271, 1272, 1273, 1274, 1275, 1276, 1277, 1278, 1279, 1280, 1281, 1282, 1283, 1284, 1285, 1286, 1287, 1288, 1807, 1289, 1290, 1291, 1292, 1293, 1294, 1295, 1296, 1297, 1298, 1299, 1300, 1301, 1302, 1303, 1304, 1305, 1306, 1307, 1308, 1309, 1310, 1311, 1312, 1313, 1314, 1315, 1316, 1317, 1318, 1319, 1320, 1321, 1322, 1323, 1324, 1325, 1326, 1327, 1328, 1329, 1330, 1331, 1332, 1333, 1334, 1335, 1336, 1337, 1338, 1339, 1340, 1341, 1342, 1343, 1344, 1345, 1346, 1347, 1348, 1349, 1350, 1351, 1352, 1353, 1354, 1355, 1356, 1357, 1358, 453, 1360, 1361, 1362, 1363, 1364, 1365, 1366, 1367, 1368, 1369, 1370, 1371, 1372, 1373, 1374, 1375, 1376, 1377, 1378, 1379, 1380, 1381, 1382, 1383, 1384, 1385, 1386, 1387, 1388, 1389, 1390, 1391, 1392, 1393, 1394, 1395, 1396, 1397, 1398, 1399, 1400, 1401, 1402, 1403, 1404, 1405, 1406, 1407, 1408, 1409, 1410, 1411, 1412, 1413, 1414, 1415, 1416, 1417, 1418, 1419, 1420, 1421, 1422, 1423, 1424, 1425, 1426, 1427, 1428, 1429, 1430, 1431, 1432, 1433, 1434, 1435, 1436, 1437, 1438, 1439, 1440, 1441, 1442, 1443, 1444, 1445, 1446, 1447, 1448, 1449, 1450, 1451, 1452, 1453, 1454, 1455, 1456, 1457, 1458, 1459, 1460, 1461, 1462, 1463, 1464, 1465, 1466, 1467, 1468, 1469, 1470, 1471, 1472, 1473, 1474, 1475, 1476, 1477, 1478, 1479, 1480, 1481, 1482, 1483, 1484, 1485, 1486, 1487, 1488, 1489, 1490, 1491, 1492, 1493, 1494, 1495, 1496, 1497, 1498, 1499, 1500, 1501, 1502, 1503, 1504, 1805, 1505, 1506, 1804, 1507, 1508, 1509, 1510, 1511, 1512, 1513, 1514, 1515, 1516, 1517, 1518, 1519, 1520, 1521, 1522, 1523, 1736, 1524, 1525, 1526, 1527, 1528, 1529, 1530, 1531, 1532, 1533, 1534, 1535, 1536, 1537, 1538, 1539, 1540, 1541, 1542, 1543, 1544, 1545, 1546, 1547, 1548, 1549, 1550, 1551, 1552, 1553, 1554, 1555, 1556, 1557, 1558, 1559, 1560, 1561, 1562, 1563, 1564, 1565, 1566, 1567, 1568, 1569, 1570, 1571, 1572, 1573, 1574, 1575, 1576, 1577, 1578, 1579, 1580, 1581, 1582, 1583, 1584, 1585, 1586, 1587, 1588, 1590, 1591, 1592, 1593, 1594, 1595, 1596, 1597, 1598, 1599, 1600, 1601, 1602, 1603, 1604, 1605, 1606, 1607, 1608, 1609, 1610, 1611, 1612, 1613, 1614, 1615, 1616, 1617, 1618, 1619, 1620, 1621, 1622, 1623, 1624, 1625, 1626, 1627, 1628, 1629, 1630, 1631, 1632, 1633, 1634, 1635, 1636, 1637, 1638, 1639, 1640, 1641, 1642, 1643, 1644, 1645, 1646, 1647, 1648, 1649, 1650, 1651, 1652, 1653, 1654, 1655, 1656, 1657, 1658, 1659, 1660, 1661, 1662, 1663, 1664, 1665, 1666, 1667, 1668, 1669, 1670, 1671, 1672, 1673, 1674, 1675, 1676, 1677, 1678, 1679, 1680, 1681, 1682, 1683, 1684, 1685, 1686, 1687, 1688, 1689, 1690, 1691, 1692, 1693, 1694, 1695, 1696, 1697, 1698, 1699, 1700, 1701, 1702, 1703, 1704, 1705, 1706, 1707, 1708, 1709, 1710, 1711, 1712, 1713, 1714, 1715, 1716, 1717, 1718, 1719, 1720, 1721, 1722, 1723, 1724, 1725, 1726, 1727, 1728, 1729, 1730, 1731, 1732, 1733, 1734, 1737, 1738, 1739, 1740, 1741, 1742, 1743, 1744, 1745, 1746, 1747, 1748, 1749, 1750, 1751, 1752, 1753, 1754, 1755, 1756, 1757, 1758, 1759, 1760, 1761, 1762, 1763, 1764, 1765, 1766, 1767, 1768, 1769, 1770, 1589, 1771, 1772, 1773, 1774, 1775, 1776, 1777, 1778, 1779, 1780, 1781, 1782, 1783, 1784, 1785, 1786, 1787, 1788, 1789, 1790, 1791, 1792, 1793, 1794, 1795, 1796, 1797, 1798, 1799, 1800, 1801, 1802, 1803, 1806, 1808, 16777215, 16777215, 1810, 1811, 1812, 1813, 1814, 1815, 1816, 1817, 1818, 1819, 1820, 1821, 1822, 1823, 1824, 1825, 1826, 1827, 1828, 1849, 1829, 1830, 1831, 1832, 1833, 1834, 1835, 1836, 1837, 1838, 1839, 1840, 1841, 1842, 1843, 1844, 1845, 1846, 1847, 1848, 1850, 1851, 1852, 1853, 1854, 1855, 1856, 1857, 1858, 1859, 1860, 1861, 1862, 1863, 1864, 1865];
         const oldList = [4096, 4097, 4098, 4099, 4100, 4101, 4102, 4103, 4104, 4105, 4106, 4107, 8192, 8193, 8194, 8195, 8196, 8197, 8198, 8199, 8200, 8201, 8202, 8203, 8204, 8205, 8206, 8207, 8208, 8209, 12288, 12289, 12290, 12291, 12292, 12293, 12294, 12295, 12296, 12297, 12298, 16384, 16385, 16386, 16387, 16388, 16389, 16390, 16391, 16392, 16393, 16394, 16395, 16396, 16397, 20480, 20481, 20482, 20483, 20484, 24576, 24577, 24578, 24579, 24580, 24581, 24582, 24583, 24584, 24585, 28672, 28673, 28674, 28675, 28676, 28677, 28678, 32768, 32769, 32770, 32771, 32772, 32773, 32774, 32775, 36864, 36865, 36866, 36867, 36868, 36869, 36870, 36871, 36872, 40960, 40961, 40962, 40963, 40964, 40965, 40966, 40967, 40968, 40969, 40970, 40971, 40972, 40973, 40974, 45056, 45057, 45058, 45059, 45060, 45061, 45062, 45063, 45064, 45065, 45066, 45067, 45068, 45069, 45070, 49152, 49153, 49154, 49155, 49156, 49157, 49158, 49159, 49160, 53248, 53249, 53250, 53251, 53252, 53253, 53254, 53255, 53256, 53257, 53258, 57344, 57345, 57346, 57347, 57348, 57349, 57350, 57351, 57352, 57353, 57354, 57355, 61440, 61441, 61442, 61443, 61444, 61445, 61446, 61447, 61448, 61449, 61450, 61451, 61452, 61453, 65536, 65537, 65538, 65539, 65540, 65541, 65542, 65543, 65544, 65545, 65546, 65547, 69632, 69633, 69634, 69635, 69636, 69637, 69638, 69639, 69640, 69641, 69642, 69643, 69644, 69645, 69646, 69647, 69648, 69649, 73728, 73729, 73730, 73731, 73732, 73733, 73734, 73735, 73736, 73737, 73738, 73739, 77824, 77825, 77826, 77827, 77828, 77829, 77830, 77831, 77832, 77833, 77834, 77835, 77836, 77837, 77838, 77839, 77840, 77841, 77842, 77843, 77844, 77845, 77846, 77847, 77848, 81920, 81921, 81922, 81923, 86016, 86017, 86018, 86019, 86020, 86021, 86022, 86023, 90112, 90113, 90114, 90115, 90116, 90117, 90118, 90119, 90120, 90121, 90122, 90123, 94208, 94209, 94210, 94211, 94212, 94213, 94214, 94215, 94216, 94217, 94218, 94219, 94220, 94221, 94222, 94223, 94224, 94225, 94226, 94227, 94228, 94229, 94230, 94231, 94232, 94233, 94234, 94235, 94236, 94237, 94238, 98304, 98305, 98306, 98307, 98308, 98309, 98310, 102400, 102401, 102402, 102403, 102404, 102405, 102406, 102407, 102408, 102409, 102410, 102411, 102412, 102413, 102414, 102415, 102416, 102417, 106496, 106497, 106498, 106499, 106500, 106501, 106502, 106503, 106504, 106505, 106506, 106507, 110592, 110593, 110594, 110595, 110596, 110597, 110598, 110599, 110600, 110601, 110602, 114688, 114689, 114690, 114691, 114692, 114693, 114694, 114695, 114696, 118784, 118785, 118786, 118787, 118788, 118789, 122880, 122881, 122882, 122883, 122884, 122885, 122886, 122887, 122888, 122889, 122890, 122891, 122892, 122893, 122894, 122895, 122896, 122897, 122898, 122899, 122900, 122901, 122902, 122903, 122904, 122905, 122906, 126976, 126977, 126978, 126979, 126980, 126981, 126982, 126983, 126984, 126985, 126986, 126987, 126988, 126989, 126990, 126991, 126992, 126993, 126994, 126995, 126996, 126997, 126998, 131072, 131073, 131074, 131075, 131076, 131077, 131078, 131079, 131080, 131081, 131082, 131083, 131084, 131085, 131086, 131087, 131088, 135168, 135169, 135170, 135171, 135172, 135173, 135174, 135175, 135176, 135177, 135178, 139264, 139265, 139266, 139267, 139268, 139269, 139270, 139271, 143360, 143361, 143362, 143363, 143364, 143365, 143366, 143367, 143368, 143369, 143370, 143371, 143372, 147456, 147457, 147458, 147459, 147460, 147461, 147462, 147463, 147464, 147465, 147466, 147467, 147468, 147469, 147470, 147471, 147472, 147473, 147474, 147475, 151552, 151553, 151554, 151555, 151556, 151557, 151558, 151559, 151560, 155648, 155649, 155650, 155651, 155652, 155653, 155654, 155655, 155656, 155657, 155658, 155659, 159744, 159745, 159746, 159747, 159748, 159749, 159750, 159751, 159752, 159753, 159754, 163840, 163841, 163842, 163843, 163844, 163845, 163846, 163847, 163848, 163849, 163850, 163851, 163852, 163853, 163854, 163855, 163856, 167936, 167937, 167938, 167939, 167940, 167941, 167942, 167943, 167944, 167945, 167946, 167947, 167948, 167949, 167950, 167951, 172032, 172033, 172034, 172035, 172036, 172037, 172038, 172039, 172040, 176128, 176129, 176130, 176131, 176132, 176133, 176134, 176135, 176136, 176137, 176138, 176139, 176140, 176141, 180224, 180225, 180226, 180227, 180228, 180229, 180230, 180231, 180232, 184320, 184321, 184322, 184323, 188416, 188417, 188418, 188419, 188420, 188421, 188422, 188423, 188424, 188425, 192512, 192513, 192514, 192515, 192516, 192517, 196608, 196609, 196610, 196611, 196612, 196613, 196614, 196615, 196616, 196617, 196618, 196619, 196620, 196621, 196622, 196623, 196624, 200704, 200705, 200706, 200707, 200708, 200709, 204800, 204801, 204802, 204803, 204804, 204805, 204806, 204807, 204808, 204809, 204810, 204811, 204812, 208896, 208897, 208898, 208899, 208900, 208901, 208902, 208903, 208904, 208905, 208906, 208907, 208908, 208909, 208910, 208911, 208912, 208913, 208914, 208915, 208916, 208917, 208918, 212992, 212993, 212994, 212995, 212996, 217088, 217089, 217090, 217091, 217092, 217093, 217094, 217095, 221184, 221185, 221186, 221187, 221188, 221189, 221190, 221191, 221192, 221193, 221194, 221195, 221196, 221197, 221198, 221199, 221200, 221201, 221202, 221203, 221204, 221205, 221206, 221207, 221208, 221209, 221210, 221211, 221212, 221213, 221214, 221215, 221216, 221217, 221218, 221219, 221220, 221221, 221222, 221223, 221224, 221225, 221226, 221227, 221228, 221229, 221230, 221231, 221232, 221233, 221234, 221235, 221236, 221237, 221238, 221239, 221240, 221241, 221242, 221243, 221244, 221245, 221246, 225280, 225281, 225282, 225283, 225284, 225285, 225286, 225287, 225288, 225289, 225290, 225291, 225292, 225293, 225294, 225295, 225296, 225297, 225298, 225299, 225300, 225301, 225302, 225303, 225304, 225305, 225306, 225307, 225308, 225309, 225310, 225311, 225312, 225313, 225314, 225315, 225316, 225317, 225318, 225319, 225320, 225321, 225322, 225323, 225324, 225325, 225326, 225327, 225328, 225329, 225330, 225331, 225332, 225333, 225334, 225335, 225336, 225337, 225338, 225339, 225340, 225341, 225342, 225343, 225344, 225345, 225346, 225347, 225348, 225349, 225350, 225351, 225352, 225353, 225354, 225355, 225356, 225357, 225358, 225359, 225360, 225361, 225362, 225363, 225364, 225365, 225366, 225367, 225368, 225369, 225370, 225371, 225372, 225373, 225374, 225375, 225376, 225377, 225378, 225379, 225380, 225381, 225382, 225383, 225384, 225385, 225386, 225387, 225388, 225389, 225390, 225391, 225392, 225393, 225394, 225395, 225396, 225397, 225398, 225399, 225400, 225401, 225402, 225403, 225404, 225405, 225406, 225407, 225408, 225409, 225410, 225411, 225412, 225413, 225414, 225415, 225416, 225417, 225418, 225419, 225420, 225421, 225422, 225423, 225424, 225425, 225426, 225427, 225428, 225429, 225430, 225431, 229376, 229377, 229378, 229379, 229380, 229381, 229382, 229383, 229384, 229385, 229386, 229387, 229388, 229389, 229390, 229391, 229392, 229393, 229394, 229395, 229396, 229397, 229398, 229399, 229400, 229401, 229402, 229403, 229404, 229405, 229406, 229407, 229408, 229409, 229410, 229411, 229412, 229413, 229414, 229415, 229416, 229417, 229418, 229419, 229420, 229421, 229422, 229423, 229424, 229425, 229426, 229427, 229428, 229429, 229430, 229431, 233472, 233473, 233474, 233475, 233476, 233477, 233478, 233479, 233480, 233481, 233482, 233483, 233484, 233485, 233486, 233487, 233488, 233489, 233490, 233491, 233492, 233493, 233494, 233495, 233496, 233497, 233498, 233499, 233500, 233501, 233502, 233503, 233504, 237568, 237569, 237570, 237571, 237572, 237573, 237574, 237575, 237576, 237577, 237578, 237579, 237580, 237581, 237582, 237583, 237584, 237585, 237586, 237587, 237588, 237589, 237590, 237591, 237592, 237593, 237594, 237595, 241664, 241665, 241666, 241667, 241668, 241669, 241670, 241671, 241672, 241673, 241674, 241675, 241676, 241677, 241678, 241679, 245760, 245761, 245762, 245763, 245764, 245765, 245766, 245767, 245768, 245769, 245770, 245771, 245772, 245773, 245774, 249856, 249857, 249858, 249859, 249860, 249861, 249862, 249863, 249864, 249865, 249866, 253952, 253953, 253954, 253955, 253956, 253957, 253958, 253959, 253960, 253961, 253962, 253963, 253964, 253965, 253966, 253967, 253968, 253969, 253970, 253971, 253972, 258048, 258049, 258050, 258051, 258052, 258053, 258054, 258055, 258056, 258057, 258058, 258059, 258060, 258061, 258062, 262144, 262145, 262146, 262147, 262148, 262149, 262150, 262151, 262152, 262153, 262154, 266240, 266241, 266242, 266243, 266244, 266245, 266246, 266247, 266248, 266249, 266250, 266251, 266252, 270336, 270337, 270338, 270339, 270340, 270341, 270342, 270343, 270344, 270345, 270346, 274432, 274433, 274434, 274435, 274436, 274437, 274438, 274439, 274440, 274441, 274442, 274443, 274444, 278528, 278529, 278530, 278531, 278532, 278533, 278534, 278535, 278536, 278537, 278538, 278539, 282624, 282625, 282626, 282627, 282628, 282629, 282630, 282631, 282632, 282633, 282634, 282635, 282636, 282637, 282638, 282639, 286720, 286721, 286722, 286723, 286724, 286725, 286726, 286727, 286728, 286729, 286730, 290816, 290817, 290818, 290819, 290820, 290821, 290822, 290823, 290824, 290825, 290826, 290827, 290828, 290829, 290830, 290831, 290832, 290833, 290834, 294912, 294913, 294914, 294915, 294916, 294917, 294918, 294919, 294920, 294921, 294922, 294923, 299008, 299009, 299010, 299011, 299012, 299013, 299014, 299015, 299016, 299017, 303104, 303105, 303106, 303107, 303108, 303109, 303110, 303111, 303112, 303113, 303114, 303115, 303116, 303117, 303118, 303119, 303120, 303121, 303122, 303123, 303124, 303125, 303126, 303127, 303128, 307200, 307201, 307202, 307203, 307204, 307205, 307206, 307207, 307208, 307209, 307210, 307211, 311296, 311297, 311298, 311299, 311300, 311301, 311302, 311303, 311304, 311305, 311306, 311307, 311308, 311309, 311310, 311311, 311312, 311313, 311314, 311315, 311316, 311317, 311318, 311319, 311320, 311321, 311322, 311323, 311324, 311325, 311326, 311327, 311328, 311329, 311330, 311331, 311332, 311333, 311334, 311335, 311336, 311337, 311338, 311339, 311340, 311341, 311342, 311343, 311344, 311345, 311346, 311347, 311348, 311349, 311350, 311351, 311352, 311353, 311354, 311355, 311356, 311357, 311358, 311359, 311360, 311361, 311362, 311363, 311364, 311365, 311366, 311367, 311368, 311369, 311370, 311371, 311372, 311373, 311374, 311375, 311376, 311377, 311378, 311379, 311380, 311381, 311382, 311383, 311384, 311385, 311386, 311387, 311388, 311389, 311390, 311391, 311392, 315392, 315393, 315394, 315395, 315396, 315397, 315398, 315399, 315400, 315401, 315402, 315403, 315404, 315405, 315406, 315407, 315408, 315409, 319488, 319489, 319490, 319491, 319492, 319493, 319494, 319495, 319496, 319497, 319498, 323584, 323585, 323586, 323587, 323588, 323589, 323590, 323591, 323592, 323593, 323594, 323595, 323596, 323597, 323598, 323599, 323600, 323601, 323602, 323603, 323604, 323605, 323606, 323607, 323608, 323609, 323610, 323611, 323612, 323613, 323614, 323615, 323616, 323617, 323618, 323619, 323620, 323621, 323622, 323623, 323624, 323625, 323626, 323627, 323628, 323629, 323630, 323631, 323632, 323633, 323634, 323635, 323636, 323637, 323638, 323639, 323640, 323641, 323642, 323643, 323644, 323645, 323646, 323647, 323648, 323649, 323650, 323651, 323652, 323653, 323654, 323655, 323656, 323657, 323658, 323659, 323660, 323661, 323662, 323663, 323664, 323665, 323666, 323667, 323668, 323669, 323670, 323671, 323672, 323673, 323674, 323675, 323676, 323677, 323678, 323679, 323680, 323681, 323682, 323683, 323684, 323685, 323686, 323687, 323688, 323689, 323690, 323691, 323692, 323693, 323694, 323695, 323696, 323697, 323698, 323699, 323700, 323701, 323702, 327680, 327681, 327682, 327683, 327684, 327685, 327686, 327687, 327688, 327689, 327690, 327691, 327692, 327693, 331776, 331777, 331778, 331779, 331780, 331781, 331782, 331783, 331784, 331785, 331786, 335872, 335873, 335874, 335875, 335876, 335877, 335878, 335879, 335880, 335881, 335882, 335883, 339968, 339969, 339970, 339971, 339972, 339973, 339974, 339975, 339976, 339977, 339978, 339979, 339980, 339981, 339982, 339983, 339984, 339985, 339986, 339987, 339988, 339989, 339990, 339991, 339992, 339993, 339994, 339995, 339996, 339997, 339998, 339999, 340000, 340001, 340002, 340003, 340004, 340005, 340006, 340007, 340008, 340009, 340010, 340011, 340012, 340013, 340014, 340015, 340016, 340017, 340018, 340019, 340020, 340021, 340022, 340023, 340024, 340025, 340026, 340027, 340028, 340029, 340030, 340031, 340032, 340033, 340034, 340035, 340036, 340037, 340038, 340039, 340040, 340041, 340042, 340043, 340044, 340045, 340046, 340047, 340048, 340049, 340050, 340051, 340052, 340053, 340054, 340055, 340056, 340057, 340058, 340059, 340060, 340061, 340062, 340063, 340064, 340065, 340066, 340067, 340068, 340069, 340070, 340071, 340072, 340073, 340074, 340075, 340076, 340077, 340078, 340079, 340080, 340081, 340082, 340083, 340084, 340085, 340086, 340087, 340088, 340089, 340090, 340091, 340092, 340093, 340094, 340095, 340096, 340097, 340098, 340099, 340100, 340101, 340102, 340103, 340104, 340105, 340106, 340107, 340108, 340109, 340110, 340111, 340112, 340113, 340114, 340115, 340116, 340117, 340118, 340119, 340120, 340121, 340122, 340123, 340124, 340125, 340126, 340127, 340128, 340129, 340130, 340131, 340132, 340133, 340134, 340135, 340136, 340137, 340138, 340139, 340140, 340141, 340142, 340143, 340144, 340145, 340146, 340147, 340148, 340149, 340150, 340151, 340152, 340153, 340154, 340155, 340156, 340157, 340158, 340159, 344064, 344065, 344066, 344067, 344068, 344069, 344070, 344071, 344072, 344073, 344074, 344075, 344076, 344077, 344078, 344079, 344080, 344081, 344082, 344083, 344084, 344085, 348160, 348161, 348162, 348163, 348164, 348165, 348166, 348167, 348168, 348169, 348170, 348171, 348172, 348173, 348174, 348175, 348176, 348177, 348178, 348179, 348180, 348181, 348182, 348183, 348184, 348185, 348186, 348187, 348188, 348189, 348190, 348191, 348192, 348193, 348194, 348195, 348196, 348197, 348198, 348199, 348200, 348201, 348202, 348203, 348204, 348205, 348206, 348207, 348208, 348209, 348210, 348211, 348212, 348213, 348214, 348215, 348216, 348217, 348218, 348219, 348220, 348221, 348222, 348223, 348224, 348225, 348226, 348227, 348228, 348229, 348230, 348231, 348232, 352256, 352257, 352258, 352259, 352260, 352261, 352262, 352263, 352264, 352265, 352266, 356352, 356353, 356354, 356355, 356356, 356357, 356358, 356359, 356360, 356361, 356362, 356363, 356364, 356365, 356366, 356367, 356368, 356369, 356370, 356371, 356372, 356373, 356374, 356375, 356376, 356377, 356378, 356379, 360448, 360449, 360450, 360451, 360452, 360453, 360454, 360455, 360456, 360457, 360458, 360459, 360460, 360461, 360462, 360463];
@@ -12934,92 +13029,6 @@ var beepbox = (function (exports) {
         return newList[oldList.indexOf(oldID)];
     }
 
-    const epsilon = (1.0e-24);
-    function clamp(min, max, val) {
-        max = max - 1;
-        if (val <= max) {
-            if (val >= min)
-                return val;
-            else
-                return min;
-        }
-        else {
-            return max;
-        }
-    }
-    function validateRange(min, max, val) {
-        if (min <= val && val <= max)
-            return val;
-        throw new Error(`Value ${val} not in range [${min}, ${max}]`);
-    }
-    function parseFloatWithDefault(s, defaultValue) {
-        let result = parseFloat(s);
-        if (Number.isNaN(result))
-            result = defaultValue;
-        return result;
-    }
-    function parseIntWithDefault(s, defaultValue) {
-        let result = parseInt(s);
-        if (Number.isNaN(result))
-            result = defaultValue;
-        return result;
-    }
-    function encode32BitNumber(buffer, x) {
-        buffer.push(base64IntToCharCode[(x >>> (6 * 5)) & 0x3]);
-        buffer.push(base64IntToCharCode[(x >>> (6 * 4)) & 0x3f]);
-        buffer.push(base64IntToCharCode[(x >>> (6 * 3)) & 0x3f]);
-        buffer.push(base64IntToCharCode[(x >>> (6 * 2)) & 0x3f]);
-        buffer.push(base64IntToCharCode[(x >>> (6 * 1)) & 0x3f]);
-        buffer.push(base64IntToCharCode[(x >>> (6 * 0)) & 0x3f]);
-    }
-    function decode32BitNumber(compressed, charIndex) {
-        let x = 0;
-        x |= base64CharCodeToInt[compressed.charCodeAt(charIndex++)] << (6 * 5);
-        x |= base64CharCodeToInt[compressed.charCodeAt(charIndex++)] << (6 * 4);
-        x |= base64CharCodeToInt[compressed.charCodeAt(charIndex++)] << (6 * 3);
-        x |= base64CharCodeToInt[compressed.charCodeAt(charIndex++)] << (6 * 2);
-        x |= base64CharCodeToInt[compressed.charCodeAt(charIndex++)] << (6 * 1);
-        x |= base64CharCodeToInt[compressed.charCodeAt(charIndex++)] << (6 * 0);
-        return x;
-    }
-    function encodeUnisonSettings(buffer, v, s, o, e, i) {
-        buffer.push(base64IntToCharCode[v]);
-        buffer.push(base64IntToCharCode[Number((s > 0))]);
-        let cleanS = Math.round(Math.abs(s) * 1000);
-        let cleanSDivided = Math.floor(cleanS / 63);
-        buffer.push(base64IntToCharCode[cleanS % 63], base64IntToCharCode[cleanSDivided % 63], base64IntToCharCode[Math.floor(cleanSDivided / 63)]);
-        buffer.push(base64IntToCharCode[Number((o > 0))]);
-        let cleanO = Math.round(Math.abs(o) * 1000);
-        let cleanODivided = Math.floor(cleanO / 63);
-        buffer.push(base64IntToCharCode[cleanO % 63], base64IntToCharCode[cleanODivided % 63], base64IntToCharCode[Math.floor(cleanODivided / 63)]);
-        buffer.push(base64IntToCharCode[Number((e > 0))]);
-        let cleanE = Math.round(Math.abs(e) * 1000);
-        buffer.push(base64IntToCharCode[cleanE % 63], base64IntToCharCode[Math.floor(cleanE / 63)]);
-        buffer.push(base64IntToCharCode[Number((i > 0))]);
-        let cleanI = Math.round(Math.abs(i) * 1000);
-        buffer.push(base64IntToCharCode[cleanI % 63], base64IntToCharCode[Math.floor(cleanI / 63)]);
-    }
-    function convertLegacyKeyToKeyAndOctave(rawKeyIndex) {
-        let key = clamp(0, Config.keys.length, rawKeyIndex);
-        let octave = 0;
-        if (rawKeyIndex === 12) {
-            key = 0;
-            octave = 1;
-        }
-        else if (rawKeyIndex === 13) {
-            key = 6;
-            octave = -1;
-        }
-        else if (rawKeyIndex === 14) {
-            key = 0;
-            octave = -1;
-        }
-        else if (rawKeyIndex === 15) {
-            key = 5;
-            octave = -1;
-        }
-        return [key, octave];
-    }
     const base64IntToCharCode = [48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 45, 95];
     const base64CharCodeToInt = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 62, 62, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 0, 0, 0, 0, 0, 0, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 0, 0, 0, 0, 63, 0, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 0, 0, 0, 0, 0];
     class BitFieldReader {
@@ -13141,6 +13150,123 @@ var beepbox = (function (exports) {
             return Math.ceil(this._index / 6);
         }
     }
+
+    function clamp(min, max, val) {
+        max = max - 1;
+        if (val <= max) {
+            if (val >= min)
+                return val;
+            else
+                return min;
+        }
+        else {
+            return max;
+        }
+    }
+    function validateRange(min, max, val) {
+        if (min <= val && val <= max)
+            return val;
+        throw new Error(`Value ${val} not in range [${min}, ${max}]`);
+    }
+    function parseFloatWithDefault(s, defaultValue) {
+        let result = parseFloat(s);
+        if (Number.isNaN(result))
+            result = defaultValue;
+        return result;
+    }
+    function parseIntWithDefault(s, defaultValue) {
+        let result = parseInt(s);
+        if (Number.isNaN(result))
+            result = defaultValue;
+        return result;
+    }
+    function encode32BitNumber(buffer, x) {
+        buffer.push(base64IntToCharCode[(x >>> (6 * 5)) & 0x3]);
+        buffer.push(base64IntToCharCode[(x >>> (6 * 4)) & 0x3f]);
+        buffer.push(base64IntToCharCode[(x >>> (6 * 3)) & 0x3f]);
+        buffer.push(base64IntToCharCode[(x >>> (6 * 2)) & 0x3f]);
+        buffer.push(base64IntToCharCode[(x >>> (6 * 1)) & 0x3f]);
+        buffer.push(base64IntToCharCode[(x >>> (6 * 0)) & 0x3f]);
+    }
+    function decode32BitNumber(compressed, charIndex) {
+        let x = 0;
+        x |= base64CharCodeToInt[compressed.charCodeAt(charIndex++)] << (6 * 5);
+        x |= base64CharCodeToInt[compressed.charCodeAt(charIndex++)] << (6 * 4);
+        x |= base64CharCodeToInt[compressed.charCodeAt(charIndex++)] << (6 * 3);
+        x |= base64CharCodeToInt[compressed.charCodeAt(charIndex++)] << (6 * 2);
+        x |= base64CharCodeToInt[compressed.charCodeAt(charIndex++)] << (6 * 1);
+        x |= base64CharCodeToInt[compressed.charCodeAt(charIndex++)] << (6 * 0);
+        return x;
+    }
+    function encodeUnisonSettings(buffer, v, s, o, e, i) {
+        buffer.push(base64IntToCharCode[v]);
+        buffer.push(base64IntToCharCode[Number((s > 0))]);
+        let cleanS = Math.round(Math.abs(s) * 1000);
+        let cleanSDivided = Math.floor(cleanS / 63);
+        buffer.push(base64IntToCharCode[cleanS % 63], base64IntToCharCode[cleanSDivided % 63], base64IntToCharCode[Math.floor(cleanSDivided / 63)]);
+        buffer.push(base64IntToCharCode[Number((o > 0))]);
+        let cleanO = Math.round(Math.abs(o) * 1000);
+        let cleanODivided = Math.floor(cleanO / 63);
+        buffer.push(base64IntToCharCode[cleanO % 63], base64IntToCharCode[cleanODivided % 63], base64IntToCharCode[Math.floor(cleanODivided / 63)]);
+        buffer.push(base64IntToCharCode[Number((e > 0))]);
+        let cleanE = Math.round(Math.abs(e) * 1000);
+        buffer.push(base64IntToCharCode[cleanE % 63], base64IntToCharCode[Math.floor(cleanE / 63)]);
+        buffer.push(base64IntToCharCode[Number((i > 0))]);
+        let cleanI = Math.round(Math.abs(i) * 1000);
+        buffer.push(base64IntToCharCode[cleanI % 63], base64IntToCharCode[Math.floor(cleanI / 63)]);
+    }
+    function fadeInSettingToSeconds(setting) {
+        return 0.0125 * (0.95 * setting + 0.05 * setting * setting);
+    }
+    function secondsToFadeInSetting(seconds) {
+        return clamp(0, Config.fadeInRange, Math.round((-0.95 + Math.sqrt(0.9025 + 0.2 * seconds / 0.0125)) / 0.1));
+    }
+    function fadeOutSettingToTicks(setting) {
+        return Config.fadeOutTicks[setting];
+    }
+    function ticksToFadeOutSetting(ticks) {
+        let lower = Config.fadeOutTicks[0];
+        if (ticks <= lower)
+            return 0;
+        for (let i = 1; i < Config.fadeOutTicks.length; i++) {
+            const upper = Config.fadeOutTicks[i];
+            if (ticks <= upper)
+                return (ticks < (lower + upper) / 2) ? i - 1 : i;
+            lower = upper;
+        }
+        return Config.fadeOutTicks.length - 1;
+    }
+    function detuneToCents(detune) {
+        return detune - Config.detuneCenter;
+    }
+    function centsToDetune(cents) {
+        return cents + Config.detuneCenter;
+    }
+    function fittingPowerOfTwo(x) {
+        return 1 << (32 - Math.clz32(Math.ceil(x) - 1));
+    }
+    function convertLegacyKeyToKeyAndOctave(rawKeyIndex) {
+        let key = clamp(0, Config.keys.length, rawKeyIndex);
+        let octave = 0;
+        if (rawKeyIndex === 12) {
+            key = 0;
+            octave = 1;
+        }
+        else if (rawKeyIndex === 13) {
+            key = 6;
+            octave = -1;
+        }
+        else if (rawKeyIndex === 14) {
+            key = 0;
+            octave = -1;
+        }
+        else if (rawKeyIndex === 15) {
+            key = 5;
+            octave = -1;
+        }
+        return [key, octave];
+    }
+
     function makeNotePin(interval, time, size) {
         return { interval: interval, time: time, size: size };
     }
@@ -13526,7 +13652,7 @@ var beepbox = (function (exports) {
             this.markCustomWaveDirty();
         }
         markCustomWaveDirty() {
-            const hashMult = Synth.fittingPowerOfTwo(Config.spectrumMax + 2) - 1;
+            const hashMult = fittingPowerOfTwo(Config.spectrumMax + 2) - 1;
             let hash = 0;
             for (const point of this.spectrum)
                 hash = ((hash * hashMult) + point) >>> 0;
@@ -13593,7 +13719,7 @@ var beepbox = (function (exports) {
             this.markCustomWaveDirty();
         }
         markCustomWaveDirty() {
-            const hashMult = Synth.fittingPowerOfTwo(Config.harmonicsMax + 2) - 1;
+            const hashMult = fittingPowerOfTwo(Config.harmonicsMax + 2) - 1;
             let hash = 0;
             for (const point of this.harmonics)
                 hash = ((hash * hashMult) + point) >>> 0;
@@ -14249,6 +14375,12 @@ var beepbox = (function (exports) {
             this.customChipWave = new Float32Array(64);
             this.customChipWaveIntegral = new Float32Array(65);
             this.operators = [];
+            this.sampleUrl = "";
+            this.sampleNote = 60;
+            this.sampleRootKey = 60;
+            this.sampleGain = 1.0;
+            this.sampleBuffer = null;
+            this.sampleSampleRate = 44100;
             this.harmonicsWave = new HarmonicsWave();
             this.drumsetEnvelopes = [];
             this.drumsetSpectrumWaves = [];
@@ -14261,6 +14393,9 @@ var beepbox = (function (exports) {
             this.upperNoteLimit = Config.maxPitch;
             this.lowerNoteLimit = 0;
             this.isNoiseInstrument = false;
+            this.extensions = [];
+            this._noteMap = null;
+            this._noteMapEnabled = false;
             if (isModChannel) {
                 for (let mod = 0; mod < Config.modCount; mod++) {
                     this.modChannels.push(-2);
@@ -14293,6 +14428,30 @@ var beepbox = (function (exports) {
             }
             this.customChipWaveIntegral[64] = 0.0;
             this.isNoiseInstrument = isNoiseChannel;
+        }
+        attachExtension(extension) {
+            const idx = this.extensions.findIndex((e) => e.id === extension.id);
+            if (idx >= 0) {
+                this.extensions[idx] = extension;
+            }
+            else {
+                this.extensions.push(extension);
+            }
+            this.extensions.sort((a, b) => { var _a, _b; return ((_a = b.priority) !== null && _a !== void 0 ? _a : 0) - ((_b = a.priority) !== null && _b !== void 0 ? _b : 0); });
+        }
+        detachExtension(id) {
+            const idx = this.extensions.findIndex((e) => e.id === id);
+            if (idx >= 0) {
+                this.extensions.splice(idx, 1);
+                return true;
+            }
+            return false;
+        }
+        hasExtension(id) {
+            return this.extensions.some((e) => e.id === id);
+        }
+        getExtension(id) {
+            return this.extensions.find((e) => e.id === id);
         }
         setTypeAndReset(type, isNoiseChannel, isModChannel) {
             if (isModChannel)
@@ -14355,120 +14514,125 @@ var beepbox = (function (exports) {
             this.upperNoteLimit = Config.maxPitch;
             this.lowerNoteLimit = 0;
             this.isNoiseInstrument = isNoiseChannel;
-            switch (type) {
-                case 0:
-                    this.chipWave = 2;
-                    this.chord = Config.chords.dictionary["arpeggio"].index;
-                    this.isUsingAdvancedLoopControls = false;
-                    this.chipWaveLoopStart = 0;
-                    this.chipWaveLoopEnd = Config.rawRawChipWaves[this.chipWave].samples.length - 1;
-                    this.chipWaveLoopMode = 0;
-                    this.chipWavePlayBackwards = false;
-                    this.chipWaveStartOffset = 0;
-                    break;
-                case 9:
-                    this.chipWave = 2;
-                    this.chord = Config.chords.dictionary["arpeggio"].index;
-                    for (let i = 0; i < 64; i++) {
-                        this.customChipWave[i] = 24 - (Math.floor(i * (48 / 64)));
-                    }
-                    let sum = 0.0;
-                    for (let i = 0; i < this.customChipWave.length; i++) {
-                        sum += this.customChipWave[i];
-                    }
-                    const average = sum / this.customChipWave.length;
-                    let cumulative = 0;
-                    let wavePrev = 0;
-                    for (let i = 0; i < this.customChipWave.length; i++) {
-                        cumulative += wavePrev;
-                        wavePrev = this.customChipWave[i] - average;
-                        this.customChipWaveIntegral[i] = cumulative;
-                    }
-                    this.customChipWaveIntegral[64] = 0.0;
-                    break;
-                case 1:
-                    this.chord = Config.chords.dictionary["custom interval"].index;
-                    this.algorithm = 0;
-                    this.feedbackType = 0;
-                    this.feedbackAmplitude = 0;
-                    for (let i = 0; i < this.operators.length; i++) {
-                        this.operators[i].reset(i);
-                    }
-                    break;
-                case 11:
-                    this.transition = 1;
-                    this.vibrato = 0;
-                    this.effects = 1;
-                    this.chord = 3;
-                    this.algorithm = 0;
-                    this.feedbackType = 0;
-                    this.algorithm6Op = 1;
-                    this.feedbackType6Op = 1;
-                    this.customAlgorithm.fromPreset(1);
-                    this.feedbackAmplitude = 0;
-                    for (let i = 0; i < this.operators.length; i++) {
-                        this.operators[i].reset(i);
-                    }
-                    break;
-                case 2:
-                    this.chipNoise = 1;
-                    this.chord = Config.chords.dictionary["arpeggio"].index;
-                    break;
-                case 3:
-                    this.chord = Config.chords.dictionary["simultaneous"].index;
-                    this.spectrumWave.reset(isNoiseChannel);
-                    break;
-                case 4:
-                    this.chord = Config.chords.dictionary["simultaneous"].index;
-                    for (let i = 0; i < Config.drumCount; i++) {
-                        this.drumsetEnvelopes[i] = Config.envelopes.dictionary["twang 2"].index;
-                        if (this.drumsetSpectrumWaves[i] == undefined) {
-                            this.drumsetSpectrumWaves[i] = new SpectrumWave(true);
+            if (instrumentTypeRegistry.has(type)) {
+                instrumentTypeRegistry.get(type).applyDefaults(this, isNoiseChannel);
+            }
+            else {
+                switch (type) {
+                    case 0:
+                        this.chipWave = 2;
+                        this.chord = Config.chords.dictionary["arpeggio"].index;
+                        this.isUsingAdvancedLoopControls = false;
+                        this.chipWaveLoopStart = 0;
+                        this.chipWaveLoopEnd = Config.rawRawChipWaves[this.chipWave].samples.length - 1;
+                        this.chipWaveLoopMode = 0;
+                        this.chipWavePlayBackwards = false;
+                        this.chipWaveStartOffset = 0;
+                        break;
+                    case 9:
+                        this.chipWave = 2;
+                        this.chord = Config.chords.dictionary["arpeggio"].index;
+                        for (let i = 0; i < 64; i++) {
+                            this.customChipWave[i] = 24 - (Math.floor(i * (48 / 64)));
                         }
-                        this.drumsetSpectrumWaves[i].reset(isNoiseChannel);
-                    }
-                    break;
-                case 5:
-                    this.chord = Config.chords.dictionary["simultaneous"].index;
-                    this.harmonicsWave.reset();
-                    break;
-                case 6:
-                    this.chord = Config.chords.dictionary["arpeggio"].index;
-                    this.pulseWidth = Config.pulseWidthRange;
-                    this.decimalOffset = 0;
-                    break;
-                case 7:
-                    this.chord = Config.chords.dictionary["strum"].index;
-                    this.harmonicsWave.reset();
-                    break;
-                case 10:
-                    this.transition = 0;
-                    this.vibrato = 0;
-                    this.interval = 0;
-                    this.effects = 0;
-                    this.chord = 0;
-                    this.modChannels = [];
-                    this.modInstruments = [];
-                    this.modulators = [];
-                    for (let mod = 0; mod < Config.modCount; mod++) {
-                        this.modChannels.push(-2);
-                        this.modInstruments.push(0);
-                        this.modulators.push(Config.modulators.dictionary["none"].index);
-                        this.invalidModulators[mod] = false;
-                        this.modFilterTypes[mod] = 0;
-                        this.modEnvelopeNumbers[mod] = 0;
-                    }
-                    break;
-                case 8:
-                    this.chord = Config.chords.dictionary["arpeggio"].index;
-                    this.supersawDynamism = Config.supersawDynamismMax;
-                    this.supersawSpread = Math.ceil(Config.supersawSpreadMax / 2.0);
-                    this.supersawShape = 0;
-                    this.pulseWidth = Config.pulseWidthRange - 1;
-                    this.decimalOffset = 0;
-                    break;
-                default:
-                    throw new Error("Unrecognized instrument type: " + type);
+                        let sum = 0.0;
+                        for (let i = 0; i < this.customChipWave.length; i++) {
+                            sum += this.customChipWave[i];
+                        }
+                        const average = sum / this.customChipWave.length;
+                        let cumulative = 0;
+                        let wavePrev = 0;
+                        for (let i = 0; i < this.customChipWave.length; i++) {
+                            cumulative += wavePrev;
+                            wavePrev = this.customChipWave[i] - average;
+                            this.customChipWaveIntegral[i] = cumulative;
+                        }
+                        this.customChipWaveIntegral[64] = 0.0;
+                        break;
+                    case 1:
+                        this.chord = Config.chords.dictionary["custom interval"].index;
+                        this.algorithm = 0;
+                        this.feedbackType = 0;
+                        this.feedbackAmplitude = 0;
+                        for (let i = 0; i < this.operators.length; i++) {
+                            this.operators[i].reset(i);
+                        }
+                        break;
+                    case 11:
+                        this.transition = 1;
+                        this.vibrato = 0;
+                        this.effects = 1;
+                        this.chord = 3;
+                        this.algorithm = 0;
+                        this.feedbackType = 0;
+                        this.algorithm6Op = 1;
+                        this.feedbackType6Op = 1;
+                        this.customAlgorithm.fromPreset(1);
+                        this.feedbackAmplitude = 0;
+                        for (let i = 0; i < this.operators.length; i++) {
+                            this.operators[i].reset(i);
+                        }
+                        break;
+                    case 2:
+                        this.chipNoise = 1;
+                        this.chord = Config.chords.dictionary["arpeggio"].index;
+                        break;
+                    case 3:
+                        this.chord = Config.chords.dictionary["simultaneous"].index;
+                        this.spectrumWave.reset(isNoiseChannel);
+                        break;
+                    case 4:
+                        this.chord = Config.chords.dictionary["simultaneous"].index;
+                        for (let i = 0; i < Config.drumCount; i++) {
+                            this.drumsetEnvelopes[i] = Config.envelopes.dictionary["twang 2"].index;
+                            if (this.drumsetSpectrumWaves[i] == undefined) {
+                                this.drumsetSpectrumWaves[i] = new SpectrumWave(true);
+                            }
+                            this.drumsetSpectrumWaves[i].reset(isNoiseChannel);
+                        }
+                        break;
+                    case 5:
+                        this.chord = Config.chords.dictionary["simultaneous"].index;
+                        this.harmonicsWave.reset();
+                        break;
+                    case 6:
+                        this.chord = Config.chords.dictionary["arpeggio"].index;
+                        this.pulseWidth = Config.pulseWidthRange;
+                        this.decimalOffset = 0;
+                        break;
+                    case 7:
+                        this.chord = Config.chords.dictionary["strum"].index;
+                        this.harmonicsWave.reset();
+                        break;
+                    case 10:
+                        this.transition = 0;
+                        this.vibrato = 0;
+                        this.interval = 0;
+                        this.effects = 0;
+                        this.chord = 0;
+                        this.modChannels = [];
+                        this.modInstruments = [];
+                        this.modulators = [];
+                        for (let mod = 0; mod < Config.modCount; mod++) {
+                            this.modChannels.push(-2);
+                            this.modInstruments.push(0);
+                            this.modulators.push(Config.modulators.dictionary["none"].index);
+                            this.invalidModulators[mod] = false;
+                            this.modFilterTypes[mod] = 0;
+                            this.modEnvelopeNumbers[mod] = 0;
+                        }
+                        break;
+                    case 8:
+                        this.chord = Config.chords.dictionary["arpeggio"].index;
+                        this.supersawDynamism = Config.supersawDynamismMax;
+                        this.supersawSpread = Math.ceil(Config.supersawSpreadMax / 2.0);
+                        this.supersawShape = 0;
+                        this.pulseWidth = Config.pulseWidthRange - 1;
+                        this.decimalOffset = 0;
+                        break;
+                    default:
+                        throw new Error("Unrecognized instrument type: " + type);
+                }
             }
             if (this.chord != Config.chords.dictionary["simultaneous"].index) {
                 this.effects = (this.effects | (1 << 11));
@@ -14602,7 +14766,7 @@ var beepbox = (function (exports) {
                 instrumentObject["pitchShiftSemitones"] = this.pitchShift;
             }
             if (effectsIncludeDetune(this.effects)) {
-                instrumentObject["detuneCents"] = Synth.detuneToCents(this.detune);
+                instrumentObject["detuneCents"] = detuneToCents(this.detune);
             }
             if (effectsIncludeVibrato(this.effects)) {
                 if (this.vibrato == -1) {
@@ -14678,8 +14842,8 @@ var beepbox = (function (exports) {
                 instrumentObject["lowerNoteLimit"] = this.lowerNoteLimit;
             }
             if (this.type != 4) {
-                instrumentObject["fadeInSeconds"] = Math.round(10000 * Synth.fadeInSettingToSeconds(this.fadeIn)) / 10000;
-                instrumentObject["fadeOutTicks"] = Synth.fadeOutSettingToTicks(this.fadeOut);
+                instrumentObject["fadeInSeconds"] = Math.round(10000 * fadeInSettingToSeconds(this.fadeIn)) / 10000;
+                instrumentObject["fadeOutTicks"] = fadeOutSettingToTicks(this.fadeOut);
             }
             if (this.type == 5 || this.type == 7) {
                 instrumentObject["harmonics"] = [];
@@ -14881,6 +15045,8 @@ var beepbox = (function (exports) {
             let type = Config.instrumentTypeNames.indexOf(instrumentObject["type"]);
             if ((format == "synthbox") && (instrumentObject["type"] == "FM"))
                 type = Config.instrumentTypeNames.indexOf("FM6op");
+            if (type == -1 && instrumentObject["type"] === "additive")
+                type = 5;
             if (type == -1)
                 type = isModChannel ? 10 : (isNoiseChannel ? 2 : 0);
             this.setTypeAndReset(type, isNoiseChannel, isModChannel);
@@ -14933,8 +15099,8 @@ var beepbox = (function (exports) {
                     }[transitionProperty];
                     if (legacySettings != undefined) {
                         transition = Config.transitions.dictionary[legacySettings.transition];
-                        this.fadeIn = Synth.secondsToFadeInSetting(legacySettings.fadeInSeconds);
-                        this.fadeOut = Synth.ticksToFadeOutSetting(legacySettings.fadeOutTicks);
+                        this.fadeIn = secondsToFadeInSetting(legacySettings.fadeInSeconds);
+                        this.fadeOut = ticksToFadeOutSetting(legacySettings.fadeOutTicks);
                     }
                 }
                 if (transition != undefined)
@@ -14944,10 +15110,10 @@ var beepbox = (function (exports) {
                 }
             }
             if (instrumentObject["fadeInSeconds"] != undefined) {
-                this.fadeIn = Synth.secondsToFadeInSetting(+instrumentObject["fadeInSeconds"]);
+                this.fadeIn = secondsToFadeInSetting(+instrumentObject["fadeInSeconds"]);
             }
             if (instrumentObject["fadeOutTicks"] != undefined) {
-                this.fadeOut = Synth.ticksToFadeOutSetting(+instrumentObject["fadeOutTicks"]);
+                this.fadeOut = ticksToFadeOutSetting(+instrumentObject["fadeOutTicks"]);
             }
             {
                 const chordProperty = instrumentObject["chord"];
@@ -15019,7 +15185,7 @@ var beepbox = (function (exports) {
                 }
             }
             if (instrumentObject["detuneCents"] != undefined) {
-                this.detune = clamp(Config.detuneMin, Config.detuneMax + 1, Math.round(Synth.centsToDetune(+instrumentObject["detuneCents"])));
+                this.detune = clamp(Config.detuneMin, Config.detuneMax + 1, Math.round(centsToDetune(+instrumentObject["detuneCents"])));
             }
             this.vibrato = Config.vibratos.dictionary["none"].index;
             const vibratoProperty = instrumentObject["vibrato"] || instrumentObject["effect"];
@@ -15700,10 +15866,10 @@ var beepbox = (function (exports) {
                 (this.type == 10 ? Config.transitions.dictionary["interrupt"] : Config.transitions.dictionary["normal"]);
         }
         getFadeInSeconds() {
-            return (this.type == 4) ? 0.0 : Synth.fadeInSettingToSeconds(this.fadeIn);
+            return (this.type == 4) ? 0.0 : fadeInSettingToSeconds(this.fadeIn);
         }
         getFadeOutTicks() {
-            return (this.type == 4) ? Config.drumsetFadeOutTicks : Synth.fadeOutSettingToTicks(this.fadeOut);
+            return (this.type == 4) ? Config.drumsetFadeOutTicks : fadeOutSettingToTicks(this.fadeOut);
         }
         getChord() {
             return effectsIncludeChord(this.effects) ? Config.chords[this.chord] : Config.chords.dictionary["simultaneous"];
@@ -16403,8 +16569,42 @@ var beepbox = (function (exports) {
                         buffer.push(73, base64IntToCharCode[instrument.stringSustain | (instrument.stringSustainType << 5)]);
                     }
                     else if (instrument.type == 10) ;
+                    else if (instrument.type == 12) {
+                        const urlLen = Math.min(instrument.sampleUrl.length, 63);
+                        buffer.push(74);
+                        buffer.push(base64IntToCharCode[urlLen]);
+                        for (let i = 0; i < urlLen; i++) {
+                            buffer.push(instrument.sampleUrl.charCodeAt(i));
+                        }
+                        buffer.push(74);
+                        buffer.push(base64IntToCharCode[instrument.sampleNote]);
+                        const rootKey = clamp(0, 127, instrument.sampleRootKey);
+                        buffer.push(base64IntToCharCode[rootKey >> 6], base64IntToCharCode[rootKey & 0x3F]);
+                        buffer.push(base64IntToCharCode[Math.round(instrument.sampleGain * 10)]);
+                        const sampleRateEncoded = clamp(0, 4095, Math.round((instrument.sampleSampleRate || 44100) / 50));
+                        buffer.push(base64IntToCharCode[sampleRateEncoded >> 6], base64IntToCharCode[sampleRateEncoded & 0x3F]);
+                    }
                     else {
                         throw new Error("Unknown instrument type.");
+                    }
+                    const extensionData = [];
+                    for (const ext of instrument.extensions) {
+                        if (ext.serialize) {
+                            const data = ext.serialize(instrument);
+                            if (data.length > 0) {
+                                const extIdx = instrumentExtensionRegistry.getOrderedIds().indexOf(ext.id);
+                                extensionData.push(extIdx >= 0 ? extIdx : 0);
+                                extensionData.push(Math.min(data.length, 4095) >> 6);
+                                extensionData.push(Math.min(data.length, 4095) & 0x3F);
+                                for (let i = 0; i < data.length && i < 4095; i++) {
+                                    extensionData.push(data[i]);
+                                }
+                            }
+                        }
+                    }
+                    if (extensionData.length > 0) {
+                        buffer.push(75);
+                        buffer.push(...extensionData);
                     }
                     buffer.push(69, base64IntToCharCode[instrument.envelopeCount]);
                     buffer.push(base64IntToCharCode[instrument.envelopeSpeed]);
@@ -17090,7 +17290,7 @@ var beepbox = (function (exports) {
                             }
                             validateRange(0, this.channels.length - 1, instrumentChannelIterator);
                             const instrument = this.channels[instrumentChannelIterator].instruments[instrumentIndexIterator];
-                            let instrumentType = validateRange(0, 12 - 1, base64CharCodeToInt[compressed.charCodeAt(charIndex++)]);
+                            let instrumentType = validateRange(0, 13 - 1, base64CharCodeToInt[compressed.charCodeAt(charIndex++)]);
                             if ((fromJummBox && beforeFive) || (beforeFour && fromGoldBox)) {
                                 if (instrumentType == 7 || instrumentType == 8) {
                                     instrumentType += 2;
@@ -17431,6 +17631,61 @@ var beepbox = (function (exports) {
                             instrument.stringSustainType = Config.enableAcousticSustain ? clamp(0, 2, sustainValue >> 5) : 0;
                         }
                         break;
+                    case 74:
+                        {
+                            const instrument = this.channels[instrumentChannelIterator].instruments[instrumentIndexIterator];
+                            const urlLen = base64CharCodeToInt[compressed.charCodeAt(charIndex++)];
+                            let url = "";
+                            for (let i = 0; i < urlLen; i++) {
+                                url += String.fromCharCode(compressed.charCodeAt(charIndex++));
+                            }
+                            instrument.sampleUrl = url;
+                            if (compressed.charCodeAt(charIndex) === 74) {
+                                charIndex++;
+                                instrument.sampleNote = base64CharCodeToInt[compressed.charCodeAt(charIndex++)];
+                                const rootKeyHigh = base64CharCodeToInt[compressed.charCodeAt(charIndex++)];
+                                const rootKeyLow = base64CharCodeToInt[compressed.charCodeAt(charIndex++)];
+                                instrument.sampleRootKey = clamp(0, 127, (rootKeyHigh << 6) | rootKeyLow);
+                                instrument.sampleGain = base64CharCodeToInt[compressed.charCodeAt(charIndex++)] / 10;
+                                const srHigh = base64CharCodeToInt[compressed.charCodeAt(charIndex++)];
+                                const srLow = base64CharCodeToInt[compressed.charCodeAt(charIndex++)];
+                                instrument.sampleSampleRate = (srHigh << 6 | srLow) * 50;
+                            }
+                        }
+                        break;
+                    case 75:
+                        {
+                            const instrument = this.channels[instrumentChannelIterator].instruments[instrumentIndexIterator];
+                            const orderedIds = instrumentExtensionRegistry.getOrderedIds();
+                            while (charIndex < compressed.length) {
+                                const nextCharCode = compressed.charCodeAt(charIndex);
+                                if (nextCharCode === 100 ||
+                                    nextCharCode === 69 ||
+                                    nextCharCode === 118 ||
+                                    nextCharCode === 84) {
+                                    break;
+                                }
+                                const extIdx = base64CharCodeToInt[nextCharCode];
+                                charIndex++;
+                                const dataLen = (base64CharCodeToInt[compressed.charCodeAt(charIndex++)] << 6)
+                                    | base64CharCodeToInt[compressed.charCodeAt(charIndex++)];
+                                if (dataLen === 0)
+                                    break;
+                                const extId = orderedIds[extIdx];
+                                const ext = extId ? instrumentExtensionRegistry.get(extId) : undefined;
+                                if (ext && ext.deserialize) {
+                                    const dataArray = [];
+                                    for (let i = 0; i < dataLen && charIndex < compressed.length; i++) {
+                                        dataArray.push(compressed.charCodeAt(charIndex++));
+                                    }
+                                    ext.deserialize(instrument, dataArray, 0);
+                                }
+                                else {
+                                    charIndex += dataLen;
+                                }
+                            }
+                        }
+                        break;
                     case 100:
                         {
                             if ((beforeNine && fromBeepBox) || ((fromJummBox && beforeFive) || (beforeFour && fromGoldBox))) {
@@ -17449,8 +17704,8 @@ var beepbox = (function (exports) {
                                     const channelIndex = base64CharCodeToInt[compressed.charCodeAt(charIndex++)];
                                     const settings = legacySettings[clamp(0, legacySettings.length, base64CharCodeToInt[compressed.charCodeAt(charIndex++)])];
                                     const instrument = this.channels[channelIndex].instruments[0];
-                                    instrument.fadeIn = Synth.secondsToFadeInSetting(settings.fadeInSeconds);
-                                    instrument.fadeOut = Synth.ticksToFadeOutSetting(settings.fadeOutTicks);
+                                    instrument.fadeIn = secondsToFadeInSetting(settings.fadeInSeconds);
+                                    instrument.fadeOut = ticksToFadeOutSetting(settings.fadeOutTicks);
                                     instrument.transition = Config.transitions.dictionary[settings.transition].index;
                                     if (instrument.transition != Config.transitions.dictionary["normal"].index) {
                                         instrument.effects |= 1 << 10;
@@ -17460,8 +17715,8 @@ var beepbox = (function (exports) {
                                     for (let channelIndex = 0; channelIndex < this.getChannelCount(); channelIndex++) {
                                         for (const instrument of this.channels[channelIndex].instruments) {
                                             const settings = legacySettings[clamp(0, legacySettings.length, base64CharCodeToInt[compressed.charCodeAt(charIndex++)])];
-                                            instrument.fadeIn = Synth.secondsToFadeInSetting(settings.fadeInSeconds);
-                                            instrument.fadeOut = Synth.ticksToFadeOutSetting(settings.fadeOutTicks);
+                                            instrument.fadeIn = secondsToFadeInSetting(settings.fadeInSeconds);
+                                            instrument.fadeOut = ticksToFadeOutSetting(settings.fadeOutTicks);
                                             instrument.transition = Config.transitions.dictionary[settings.transition].index;
                                             if (instrument.transition != Config.transitions.dictionary["normal"].index) {
                                                 instrument.effects |= 1 << 10;
@@ -17472,8 +17727,8 @@ var beepbox = (function (exports) {
                                 else if ((beforeFour && !fromGoldBox && !fromUltraBox && !fromSlarmoosBox && !fromJukeBox) || fromBeepBox) {
                                     const settings = legacySettings[clamp(0, legacySettings.length, base64CharCodeToInt[compressed.charCodeAt(charIndex++)])];
                                     const instrument = this.channels[instrumentChannelIterator].instruments[instrumentIndexIterator];
-                                    instrument.fadeIn = Synth.secondsToFadeInSetting(settings.fadeInSeconds);
-                                    instrument.fadeOut = Synth.ticksToFadeOutSetting(settings.fadeOutTicks);
+                                    instrument.fadeIn = secondsToFadeInSetting(settings.fadeInSeconds);
+                                    instrument.fadeOut = ticksToFadeOutSetting(settings.fadeOutTicks);
                                     instrument.transition = Config.transitions.dictionary[settings.transition].index;
                                     if (instrument.transition != Config.transitions.dictionary["normal"].index) {
                                         instrument.effects |= 1 << 10;
@@ -17482,8 +17737,8 @@ var beepbox = (function (exports) {
                                 else {
                                     const settings = legacySettings[clamp(0, legacySettings.length, base64CharCodeToInt[compressed.charCodeAt(charIndex++)])];
                                     const instrument = this.channels[instrumentChannelIterator].instruments[instrumentIndexIterator];
-                                    instrument.fadeIn = Synth.secondsToFadeInSetting(settings.fadeInSeconds);
-                                    instrument.fadeOut = Synth.ticksToFadeOutSetting(settings.fadeOutTicks);
+                                    instrument.fadeIn = secondsToFadeInSetting(settings.fadeInSeconds);
+                                    instrument.fadeOut = ticksToFadeOutSetting(settings.fadeOutTicks);
                                     instrument.transition = Config.transitions.dictionary[settings.transition].index;
                                     if (base64CharCodeToInt[compressed.charCodeAt(charIndex++)] > 0) {
                                         instrument.legacyTieOver = true;
@@ -18874,6 +19129,8 @@ var beepbox = (function (exports) {
             }
         }
         static _isProperUrl(string) {
+            if (string.startsWith("local:"))
+                return true;
             try {
                 if (OFFLINE) {
                     return Boolean(string);
@@ -18887,6 +19144,7 @@ var beepbox = (function (exports) {
             }
         }
         static _parseAndConfigureCustomSample(url, customSampleUrls, customSamplePresets, sampleLoadingState, parseOldSyntax) {
+            var _a, _b;
             const defaultIndex = 0;
             const defaultIntegratedSamples = Config.chipWaves[defaultIndex].samples;
             const defaultSamples = Config.rawRawChipWaves[defaultIndex].samples;
@@ -19022,6 +19280,7 @@ var beepbox = (function (exports) {
                 }
             }
             if (parsedUrl != null) {
+                const isLocalSample = urlSliced.startsWith("local:");
                 let urlWithNamedOptions = urlSliced;
                 const namedOptions = [];
                 if (customSampleRate !== 44100)
@@ -19047,7 +19306,18 @@ var beepbox = (function (exports) {
                 }
                 customSampleUrls[customSampleUrlIndex] = urlWithNamedOptions;
                 let name;
-                if (OFFLINE) {
+                if (isLocalSample) {
+                    const hash = urlSliced.slice(6);
+                    try {
+                        const raw = localStorage.getItem("bb_sample_meta");
+                        const cache = raw ? JSON.parse(raw) : {};
+                        name = (_b = (_a = cache[hash]) === null || _a === void 0 ? void 0 : _a.name) !== null && _b !== void 0 ? _b : hash;
+                    }
+                    catch (_c) {
+                        name = hash;
+                    }
+                }
+                else if (OFFLINE) {
                     name = decodeURIComponent(parsedUrl.replace(/^([^\/]*\/)+/, ""));
                 }
                 else {
@@ -19802,6 +20072,647 @@ var beepbox = (function (exports) {
     Song._oldestJukeBoxVersion = 1;
     Song._latestJukeBoxVersion = 5;
     Song._variant = 0x4a;
+
+    const drumsetSpec = {
+        type: 4,
+        isNoise: false,
+        hasSpecialInterval: true,
+        isChipLike: false,
+        displayName: Config.instrumentTypeNames[4],
+        applyDefaults: (instrument, isNoiseChannel) => {
+            instrument.chord = Config.chords.dictionary["simultaneous"].index;
+            for (let i = 0; i < Config.drumCount; i++) {
+                instrument.drumsetEnvelopes[i] = Config.envelopes.dictionary["twang 2"].index;
+                if (instrument.drumsetSpectrumWaves[i] == undefined) {
+                    instrument.drumsetSpectrumWaves[i] = new SpectrumWave(true);
+                }
+                instrument.drumsetSpectrumWaves[i].reset(isNoiseChannel);
+            }
+        },
+    };
+    instrumentTypeRegistry.register(drumsetSpec);
+
+    const harmonicsSpec = {
+        type: 5,
+        isNoise: false,
+        hasSpecialInterval: true,
+        isChipLike: false,
+        displayName: Config.instrumentTypeNames[5],
+        applyDefaults: (instrument, isNoiseChannel) => {
+            instrument.chord = Config.chords.dictionary["simultaneous"].index;
+            instrument.harmonicsWave.reset();
+        },
+    };
+    instrumentTypeRegistry.register(harmonicsSpec);
+
+    const pwmSpec = {
+        type: 6,
+        isNoise: false,
+        hasSpecialInterval: false,
+        isChipLike: false,
+        displayName: Config.instrumentTypeNames[6],
+        applyDefaults: (instrument, isNoiseChannel) => {
+            instrument.chord = Config.chords.dictionary["arpeggio"].index;
+            instrument.pulseWidth = Config.pulseWidthRange;
+            instrument.decimalOffset = 0;
+        },
+    };
+    instrumentTypeRegistry.register(pwmSpec);
+
+    const pickedStringSpec = {
+        type: 7,
+        isNoise: false,
+        hasSpecialInterval: true,
+        isChipLike: false,
+        displayName: Config.instrumentTypeNames[7],
+        applyDefaults: (instrument, isNoiseChannel) => {
+            instrument.chord = Config.chords.dictionary["strum"].index;
+            instrument.harmonicsWave.reset();
+        },
+    };
+    instrumentTypeRegistry.register(pickedStringSpec);
+
+    const supersawSpec = {
+        type: 8,
+        isNoise: false,
+        hasSpecialInterval: false,
+        isChipLike: false,
+        displayName: Config.instrumentTypeNames[8],
+        applyDefaults: (instrument, isNoiseChannel) => {
+            instrument.chord = Config.chords.dictionary["arpeggio"].index;
+            instrument.supersawDynamism = Config.supersawDynamismMax;
+            instrument.supersawSpread = Math.ceil(Config.supersawSpreadMax / 2.0);
+            instrument.supersawShape = 0;
+            instrument.pulseWidth = Config.pulseWidthRange - 1;
+            instrument.decimalOffset = 0;
+        },
+    };
+    instrumentTypeRegistry.register(supersawSpec);
+
+    const customChipWaveSpec = {
+        type: 9,
+        isNoise: false,
+        hasSpecialInterval: false,
+        isChipLike: true,
+        displayName: Config.instrumentTypeNames[9],
+        applyDefaults: (instrument, isNoiseChannel) => {
+            instrument.chipWave = 2;
+            instrument.chord = Config.chords.dictionary["arpeggio"].index;
+            for (let i = 0; i < 64; i++) {
+                instrument.customChipWave[i] = 24 - (Math.floor(i * (48 / 64)));
+            }
+            let sum = 0.0;
+            for (let i = 0; i < instrument.customChipWave.length; i++) {
+                sum += instrument.customChipWave[i];
+            }
+            const average = sum / instrument.customChipWave.length;
+            let cumulative = 0;
+            let wavePrev = 0;
+            for (let i = 0; i < instrument.customChipWave.length; i++) {
+                cumulative += wavePrev;
+                wavePrev = instrument.customChipWave[i] - average;
+                instrument.customChipWaveIntegral[i] = cumulative;
+            }
+            instrument.customChipWaveIntegral[64] = 0.0;
+        },
+    };
+    instrumentTypeRegistry.register(customChipWaveSpec);
+
+    const modSpec = {
+        type: 10,
+        isNoise: false,
+        hasSpecialInterval: false,
+        isChipLike: false,
+        displayName: Config.instrumentTypeNames[10],
+        applyDefaults: (instrument, isNoiseChannel) => {
+            instrument.transition = 0;
+            instrument.vibrato = 0;
+            instrument.interval = 0;
+            instrument.effects = 0;
+            instrument.chord = 0;
+            instrument.modChannels = [];
+            instrument.modInstruments = [];
+            instrument.modulators = [];
+            for (let mod = 0; mod < Config.modCount; mod++) {
+                instrument.modChannels.push(-2);
+                instrument.modInstruments.push(0);
+                instrument.modulators.push(Config.modulators.dictionary["none"].index);
+                instrument.invalidModulators[mod] = false;
+                instrument.modFilterTypes[mod] = 0;
+                instrument.modEnvelopeNumbers[mod] = 0;
+            }
+        },
+    };
+    instrumentTypeRegistry.register(modSpec);
+
+    const fm6opSpec = {
+        type: 11,
+        isNoise: false,
+        hasSpecialInterval: false,
+        isChipLike: false,
+        displayName: Config.instrumentTypeNames[11],
+        applyDefaults: (instrument, isNoiseChannel) => {
+            instrument.transition = 1;
+            instrument.vibrato = 0;
+            instrument.effects = 1;
+            instrument.chord = 3;
+            instrument.algorithm = 0;
+            instrument.feedbackType = 0;
+            instrument.algorithm6Op = 1;
+            instrument.feedbackType6Op = 1;
+            instrument.customAlgorithm.fromPreset(1);
+            instrument.feedbackAmplitude = 0;
+            for (let i = 0; i < instrument.operators.length; i++) {
+                instrument.operators[i].reset(i);
+            }
+        },
+    };
+    instrumentTypeRegistry.register(fm6opSpec);
+
+    const sampleTriggerSpec = {
+        type: 12,
+        isNoise: false,
+        hasSpecialInterval: false,
+        isChipLike: false,
+        displayName: Config.instrumentTypeNames[12],
+        applyDefaults: (instrument, isNoiseChannel) => {
+            instrument.sampleUrl = "";
+            instrument.sampleNote = 60;
+            instrument.sampleRootKey = 60;
+            instrument.sampleGain = 1.0;
+            instrument.sampleBuffer = null;
+            instrument.sampleSampleRate = 44100;
+        },
+    };
+    instrumentTypeRegistry.register(sampleTriggerSpec);
+
+    var VoiceMode;
+    (function (VoiceMode) {
+        VoiceMode[VoiceMode["Layer"] = 0] = "Layer";
+        VoiceMode[VoiceMode["Replace"] = 1] = "Replace";
+    })(VoiceMode || (VoiceMode = {}));
+
+    function noteMapSynthSentinel() {
+        throw new Error("noteMapSynthSentinel called directly — _routeTone should have resolved it");
+    }
+    const noteMapExtension = {
+        id: 'noteMap',
+        routeNote(ctx) {
+            const instrument = ctx.instrument;
+            const noteMap = instrument._noteMap;
+            const enabled = instrument._noteMapEnabled;
+            if (!noteMap || !enabled)
+                return null;
+            const tone = ctx.tone;
+            const noteNumber = tone.note != null ? tone.note.pitches[0] : tone.pitches[0];
+            const action = noteMap.get(noteNumber);
+            if (!action)
+                return null;
+            const waveMap = instrument._noteWaveMap;
+            const wave = waveMap ? waveMap.get(noteNumber) : null;
+            if (wave) {
+                tone.noteWave = wave;
+                tone.noteSampleRootKey = action.rootKey;
+                tone.noteSampleGain = action.gain;
+                tone.noteSampleRate = 44100;
+            }
+            else {
+                return null;
+            }
+            if (action.mode === VoiceMode.Replace) {
+                return [{
+                        synthFunction: noteMapSynthSentinel,
+                        tone: ctx.tone,
+                        mode: VoiceMode.Replace,
+                        gain: action.gain,
+                    }];
+            }
+            else {
+                return [
+                    { synthFunction: ctx.defaultSynth, tone: ctx.tone, mode: VoiceMode.Layer, gain: 1.0 },
+                    {
+                        synthFunction: noteMapSynthSentinel,
+                        tone: ctx.tone,
+                        mode: VoiceMode.Layer,
+                        gain: action.gain,
+                    },
+                ];
+            }
+        },
+        onCompute(ctx) {
+            const instrument = ctx.instrument;
+            const noteMap = instrument._noteMap;
+            if (!noteMap)
+                return;
+            let waveMap = instrument._noteWaveMap;
+            if (waveMap == null) {
+                waveMap = new Map();
+                instrument._noteWaveMap = waveMap;
+            }
+            for (const note of waveMap.keys()) {
+                if (!noteMap.has(note))
+                    waveMap.delete(note);
+            }
+            for (const [note, action] of noteMap) {
+                if (!waveMap.has(note)) {
+                    const wave = findLoadedWave(action.sampleUrl);
+                    if (wave != null)
+                        waveMap.set(note, wave);
+                }
+            }
+        },
+        serialize(instrument) {
+            const noteMap = instrument._noteMap;
+            if (!noteMap || noteMap.size === 0)
+                return [];
+            const result = [];
+            result.push(Math.min(noteMap.size, 63));
+            let count = 0;
+            for (const [note, action] of noteMap) {
+                if (count >= 63)
+                    break;
+                result.push(clampInt(note, 0, 127));
+                result.push(action.mode === VoiceMode.Replace ? 1 : 0);
+                result.push(clampInt(action.rootKey, 0, 127));
+                result.push(Math.round(action.gain * 10));
+                const urlLen = Math.min(action.sampleUrl.length, 63);
+                result.push(urlLen);
+                for (let i = 0; i < urlLen; i++) {
+                    result.push(action.sampleUrl.charCodeAt(i));
+                }
+                count++;
+            }
+            return result;
+        },
+        deserialize(instrument, data, index) {
+            const entryCount = data[index++];
+            const noteMap = new Map();
+            for (let i = 0; i < entryCount; i++) {
+                const note = data[index++];
+                const mode = data[index++] === 1 ? VoiceMode.Replace : VoiceMode.Layer;
+                const rootKey = data[index++];
+                const gain = data[index++] / 10;
+                const urlLen = data[index++];
+                let url = '';
+                for (let j = 0; j < urlLen; j++) {
+                    url += String.fromCharCode(data[index++]);
+                }
+                noteMap.set(note, { mode, sampleUrl: url, rootKey, gain });
+            }
+            instrument._noteMap = noteMap;
+            instrument._noteMapEnabled = entryCount > 0;
+            instrument._noteWaveMap = new Map();
+            return index;
+        },
+    };
+    function findLoadedWave(url) {
+        const expected = normalizeSampleUrl(url);
+        for (const key in sampleLoadingState.urlTable) {
+            if (normalizeSampleUrl(sampleLoadingState.urlTable[+key]) !== expected)
+                continue;
+            const wave = Config.rawChipWaves[+key];
+            if (wave != null && wave.samples.length > 0)
+                return wave.samples;
+        }
+        return null;
+    }
+    function normalizeSampleUrl(url) {
+        return url.split("!")[0].split(",")[0].trim();
+    }
+    instrumentExtensionRegistry.register(noteMapExtension);
+    function clampInt(value, min, max) {
+        return Math.max(min, Math.min(max, value | 0));
+    }
+
+    class SynthFunctionRegistry {
+        constructor() {
+            this.factories = new Map();
+        }
+        register(type, factory) {
+            this.factories.set(type, factory);
+        }
+        get(type, instrument) {
+            const factory = this.factories.get(type);
+            if (factory === undefined) {
+                throw new Error("Unrecognized instrument type: " + instrument.type);
+            }
+            return factory(instrument);
+        }
+        has(type) {
+            return this.factories.has(type);
+        }
+    }
+    const synthFunctionRegistry = new SynthFunctionRegistry();
+
+    class Deque {
+        constructor() {
+            this._capacity = 1;
+            this._buffer = [undefined];
+            this._mask = 0;
+            this._offset = 0;
+            this._count = 0;
+        }
+        pushFront(element) {
+            if (this._count >= this._capacity)
+                this._expandCapacity();
+            this._offset = (this._offset - 1) & this._mask;
+            this._buffer[this._offset] = element;
+            this._count++;
+        }
+        pushBack(element) {
+            if (this._count >= this._capacity)
+                this._expandCapacity();
+            this._buffer[(this._offset + this._count) & this._mask] = element;
+            this._count++;
+        }
+        popFront() {
+            if (this._count <= 0)
+                throw new Error("No elements left to pop.");
+            const element = this._buffer[this._offset];
+            this._buffer[this._offset] = undefined;
+            this._offset = (this._offset + 1) & this._mask;
+            this._count--;
+            return element;
+        }
+        popBack() {
+            if (this._count <= 0)
+                throw new Error("No elements left to pop.");
+            this._count--;
+            const index = (this._offset + this._count) & this._mask;
+            const element = this._buffer[index];
+            this._buffer[index] = undefined;
+            return element;
+        }
+        peakFront() {
+            if (this._count <= 0)
+                throw new Error("No elements left to pop.");
+            return this._buffer[this._offset];
+        }
+        peakBack() {
+            if (this._count <= 0)
+                throw new Error("No elements left to pop.");
+            return this._buffer[(this._offset + this._count - 1) & this._mask];
+        }
+        count() {
+            return this._count;
+        }
+        set(index, element) {
+            if (index < 0 || index >= this._count)
+                throw new Error("Invalid index");
+            this._buffer[(this._offset + index) & this._mask] = element;
+        }
+        get(index) {
+            if (index < 0 || index >= this._count)
+                throw new Error("Invalid index");
+            return this._buffer[(this._offset + index) & this._mask];
+        }
+        remove(index) {
+            if (index < 0 || index >= this._count)
+                throw new Error("Invalid index");
+            if (index <= (this._count >> 1)) {
+                while (index > 0) {
+                    this.set(index, this.get(index - 1));
+                    index--;
+                }
+                this.popFront();
+            }
+            else {
+                index++;
+                while (index < this._count) {
+                    this.set(index - 1, this.get(index));
+                    index++;
+                }
+                this.popBack();
+            }
+        }
+        _expandCapacity() {
+            if (this._capacity >= 0x40000000)
+                throw new Error("Capacity too big.");
+            this._capacity = this._capacity << 1;
+            const oldBuffer = this._buffer;
+            const newBuffer = new Array(this._capacity);
+            const size = this._count | 0;
+            const offset = this._offset | 0;
+            for (let i = 0; i < size; i++) {
+                newBuffer[i] = oldBuffer[(offset + i) & this._mask];
+            }
+            for (let i = size; i < this._capacity; i++) {
+                newBuffer[i] = undefined;
+            }
+            this._offset = 0;
+            this._buffer = newBuffer;
+            this._mask = this._capacity - 1;
+        }
+    }
+
+    class EventManager {
+        constructor() {
+            this.activeEvents = [];
+            this.listeners = {};
+            this.activeEvents = [];
+            this.listeners = {};
+        }
+        raise(eventType, eventData, extraEventData) {
+            if (this.listeners[eventType] == undefined) {
+                return;
+            }
+            this.activeEvents.push(eventType);
+            for (let i = 0; i < this.listeners[eventType].length; i++) {
+                this.listeners[eventType][i](eventData, extraEventData);
+            }
+            this.activeEvents.pop();
+        }
+        listen(eventType, callback) {
+            if (this.listeners[eventType] == undefined) {
+                this.listeners[eventType] = [];
+            }
+            this.listeners[eventType].push(callback);
+        }
+        unlisten(eventType, callback) {
+            if (this.listeners[eventType] == undefined) {
+                return;
+            }
+            const lisen = this.listeners[eventType].indexOf(callback);
+            if (lisen != -1) {
+                this.listeners[eventType].splice(lisen, 1);
+            }
+        }
+        unlistenAll(eventType) {
+            if (this.listeners[eventType] == undefined) {
+                return;
+            }
+            this.listeners[eventType] = [];
+        }
+    }
+    const events = new EventManager();
+
+    const PRIME32_1 = 2654435761;
+    const PRIME32_2 = 2246822519;
+    const PRIME32_3 = 3266489917;
+    const PRIME32_4 = 668265263;
+    const PRIME32_5 = 374761393;
+    let encoder;
+    /**
+     *
+     * @param input - byte array or string
+     * @param seed - optional seed (32-bit unsigned);
+     */
+    function xxHash32(input, seed = 0) {
+        const buffer = typeof input === 'string' ? (encoder ??= new TextEncoder()).encode(input) : input;
+        const b = buffer;
+        /*
+            Step 1. Initialize internal accumulators
+            Each accumulator gets an initial value based on optional seed input. Since the seed is optional, it can be 0.
+
+            ```
+                u32 acc1 = seed + PRIME32_1 + PRIME32_2;
+                u32 acc2 = seed + PRIME32_2;
+                u32 acc3 = seed + 0;
+                u32 acc4 = seed - PRIME32_1;
+            ```
+            Special case : input is less than 16 bytes
+            When input is too small (< 16 bytes), the algorithm will not process any stripe. Consequently, it will not
+            make use of parallel accumulators.
+
+            In which case, a simplified initialization is performed, using a single accumulator :
+
+            u32 acc  = seed + PRIME32_5;
+            The algorithm then proceeds directly to step 4.
+        */
+        let acc = (seed + PRIME32_5) & 0xffffffff;
+        let offset = 0;
+        if (b.length >= 16) {
+            const accN = [
+                (seed + PRIME32_1 + PRIME32_2) & 0xffffffff,
+                (seed + PRIME32_2) & 0xffffffff,
+                (seed + 0) & 0xffffffff,
+                (seed - PRIME32_1) & 0xffffffff,
+            ];
+            /*
+                Step 2. Process stripes
+                A stripe is a contiguous segment of 16 bytes. It is evenly divided into 4 lanes, of 4 bytes each.
+                The first lane is used to update accumulator 1, the second lane is used to update accumulator 2, and so on.
+
+                Each lane read its associated 32-bit value using little-endian convention.
+
+                For each {lane, accumulator}, the update process is called a round, and applies the following formula :
+
+                ```
+                accN = accN + (laneN * PRIME32_2);
+                accN = accN <<< 13;
+                accN = accN * PRIME32_1;
+                ```
+
+                This shuffles the bits so that any bit from input lane impacts several bits in output accumulator.
+                All operations are performed modulo 2^32.
+
+                Input is consumed one full stripe at a time. Step 2 is looped as many times as necessary to consume
+                the whole input, except the last remaining bytes which cannot form a stripe (< 16 bytes). When that
+                happens, move to step 3.
+            */
+            const b = buffer;
+            const limit = b.length - 16;
+            let lane = 0;
+            for (offset = 0; (offset & 0xfffffff0) <= limit; offset += 4) {
+                const i = offset;
+                const laneN0 = b[i + 0] + (b[i + 1] << 8);
+                const laneN1 = b[i + 2] + (b[i + 3] << 8);
+                const laneNP = laneN0 * PRIME32_2 + ((laneN1 * PRIME32_2) << 16);
+                let acc = (accN[lane] + laneNP) & 0xffffffff;
+                acc = (acc << 13) | (acc >>> 19);
+                const acc0 = acc & 0xffff;
+                const acc1 = acc >>> 16;
+                accN[lane] = (acc0 * PRIME32_1 + ((acc1 * PRIME32_1) << 16)) & 0xffffffff;
+                lane = (lane + 1) & 0x3;
+            }
+            /*
+                Step 3. Accumulator convergence
+                All 4 lane accumulators from previous steps are merged to produce a single remaining accumulator
+                of same width (32-bit). The associated formula is as follows :
+
+                ```
+                acc = (acc1 <<< 1) + (acc2 <<< 7) + (acc3 <<< 12) + (acc4 <<< 18);
+                ```
+            */
+            acc =
+                (((accN[0] << 1) | (accN[0] >>> 31)) +
+                    ((accN[1] << 7) | (accN[1] >>> 25)) +
+                    ((accN[2] << 12) | (accN[2] >>> 20)) +
+                    ((accN[3] << 18) | (accN[3] >>> 14))) &
+                    0xffffffff;
+        }
+        /*
+            Step 4. Add input length
+            The input total length is presumed known at this stage. This step is just about adding the length to
+            accumulator, so that it participates to final mixing.
+
+            ```
+            acc = acc + (u32)inputLength;
+            ```
+        */
+        acc = (acc + buffer.length) & 0xffffffff;
+        /*
+            Step 5. Consume remaining input
+            There may be up to 15 bytes remaining to consume from the input. The final stage will digest them according
+            to following pseudo-code :
+            ```
+            while (remainingLength >= 4) {
+                lane = read_32bit_little_endian(input_ptr);
+                acc = acc + lane * PRIME32_3;
+                acc = (acc <<< 17) * PRIME32_4;
+                input_ptr += 4; remainingLength -= 4;
+            }
+            ```
+            This process ensures that all input bytes are present in the final mix.
+        */
+        const limit = buffer.length - 4;
+        for (; offset <= limit; offset += 4) {
+            const i = offset;
+            const laneN0 = b[i + 0] + (b[i + 1] << 8);
+            const laneN1 = b[i + 2] + (b[i + 3] << 8);
+            const laneP = laneN0 * PRIME32_3 + ((laneN1 * PRIME32_3) << 16);
+            acc = (acc + laneP) & 0xffffffff;
+            acc = (acc << 17) | (acc >>> 15);
+            acc = ((acc & 0xffff) * PRIME32_4 + (((acc >>> 16) * PRIME32_4) << 16)) & 0xffffffff;
+        }
+        /*
+            ```
+            while (remainingLength >= 1) {
+                lane = read_byte(input_ptr);
+                acc = acc + lane * PRIME32_5;
+                acc = (acc <<< 11) * PRIME32_1;
+                input_ptr += 1; remainingLength -= 1;
+            }
+            ```
+        */
+        for (; offset < b.length; ++offset) {
+            const lane = b[offset];
+            acc = acc + lane * PRIME32_5;
+            acc = (acc << 11) | (acc >>> 21);
+            acc = ((acc & 0xffff) * PRIME32_1 + (((acc >>> 16) * PRIME32_1) << 16)) & 0xffffffff;
+        }
+        /*
+            Step 6. Final mix (avalanche)
+            The final mix ensures that all input bits have a chance to impact any bit in the output digest,
+            resulting in an unbiased distribution. This is also called avalanche effect.
+            ```
+            acc = acc xor (acc >> 15);
+            acc = acc * PRIME32_2;
+            acc = acc xor (acc >> 13);
+            acc = acc * PRIME32_3;
+            acc = acc xor (acc >> 16);
+            ```
+        */
+        acc = acc ^ (acc >>> 15);
+        acc = (((acc & 0xffff) * PRIME32_2) & 0xffffffff) + (((acc >>> 16) * PRIME32_2) << 16);
+        acc = acc ^ (acc >>> 13);
+        acc = (((acc & 0xffff) * PRIME32_3) & 0xffffffff) + (((acc >>> 16) * PRIME32_3) << 16);
+        acc = acc ^ (acc >>> 16);
+        // turn any negatives back into a positive number;
+        return acc < 0 ? acc + 4294967296 : acc;
+    }
+
+    const epsilon = (1.0e-24);
     class PickedString {
         constructor() {
             this.delayLine = null;
@@ -20577,6 +21488,8 @@ var beepbox = (function (exports) {
             this.drumsetFilterEnvelopeEnd = drumsetFilterEnvelopeEnd;
         }
     }
+    const _defaultVoice = [{ synthFunction: (() => { }), tone: null, mode: VoiceMode.Layer, gain: 1.0 }];
+    const _emptyVoiceArray = [];
     class Tone {
         constructor() {
             this.pitches = Array(Config.maxChordSize + 2).fill(0);
@@ -20651,6 +21564,11 @@ var beepbox = (function (exports) {
             this.filterResonanceStart = 0.0;
             this.filterResonanceDelta = 0.0;
             this.isFirstOrder = false;
+            this.voices = null;
+            this.noteWave = null;
+            this.noteSampleRootKey = 60;
+            this.noteSampleGain = 1.0;
+            this.noteSampleRate = 44100;
             this.envelopeComputer = new EnvelopeComputer();
             this.reset();
         }
@@ -20684,6 +21602,11 @@ var beepbox = (function (exports) {
             this.prevStringDecay = null;
             this.supersawPrevPhaseDelta = null;
             this.drumsetPitch = null;
+            this.voices = null;
+            this.noteWave = null;
+            this.noteSampleRootKey = 60;
+            this.noteSampleGain = 1.0;
+            this.noteSampleRate = 44100;
         }
     }
     class InstrumentState {
@@ -21008,6 +21931,11 @@ var beepbox = (function (exports) {
             if (usesInvertWave) {
                 if (synth.isModActive(Config.modulators.dictionary["invert wave"].index, channelIndex, instrumentIndex)) {
                     this.invertWave = Boolean(Math.floor(synth.getModValue(Config.modulators.dictionary["invert wave"].index, channelIndex, instrumentIndex, false)));
+                }
+            }
+            for (const extension of instrument.extensions) {
+                if (extension.onCompute) {
+                    extension.onCompute({ instrument, instrumentState: this, channelIndex, instrumentIndex });
                 }
             }
             this.volumeScale = 1.0;
@@ -21598,6 +22526,14 @@ var beepbox = (function (exports) {
                 this.unisonOffset = instrument.unisonOffset;
                 this.unisonExpression = instrument.unisonExpression;
                 this.unisonSign = instrument.unisonSign;
+            }
+            else if (instrument.type == 12) {
+                this.wave = instrument.sampleBuffer;
+                this.unisonVoices = 1;
+                this.unisonSpread = 0;
+                this.unisonOffset = 0;
+                this.unisonExpression = 1.4;
+                this.unisonSign = 1.0;
             }
             else if (instrument.type == 4) {
                 for (let i = 0; i < Config.drumCount; i++) {
@@ -23635,11 +24571,47 @@ var beepbox = (function (exports) {
                 }
             }
         }
+        _routeTone(tone, instrument, instrumentState) {
+            const synth = instrumentState.synthesizer;
+            if (synth == null)
+                return _emptyVoiceArray;
+            if (instrument.extensions.length === 0) {
+                _defaultVoice[0].synthFunction = synth;
+                _defaultVoice[0].tone = tone;
+                return _defaultVoice;
+            }
+            let voices = _defaultVoice;
+            _defaultVoice[0].synthFunction = synth;
+            _defaultVoice[0].tone = tone;
+            for (const extension of instrument.extensions) {
+                if (extension.routeNote) {
+                    const result = extension.routeNote({ tone, instrument, instrumentState, defaultSynth: synth });
+                    if (result !== null) {
+                        voices = result;
+                    }
+                }
+            }
+            if (voices) {
+                for (const voice of voices) {
+                    if (voice.synthFunction === noteMapSynthSentinel) {
+                        voice.synthFunction = Synth.noteMapSampleSynth;
+                    }
+                }
+            }
+            return voices != null ? voices : _emptyVoiceArray;
+        }
         playTone(channelIndex, bufferIndex, runLength, tone) {
             const channelState = this.channels[channelIndex];
             const instrumentState = channelState.instruments[tone.instrumentIndex];
-            if (instrumentState.synthesizer != null)
+            const voices = tone.voices;
+            if (voices != null && voices.length > 0) {
+                for (const voice of voices) {
+                    voice.synthFunction(this, bufferIndex, runLength, voice.tone, instrumentState);
+                }
+            }
+            else if (instrumentState.synthesizer != null) {
                 instrumentState.synthesizer(this, bufferIndex, runLength, tone, instrumentState);
+            }
             tone.envelopeComputer.clearEnvelopes();
             instrumentState.envelopeComputer.clearEnvelopes();
         }
@@ -23770,6 +24742,9 @@ var beepbox = (function (exports) {
                 expressionReferencePitch = 0;
                 pitchDamping = 1.0;
                 basePitch = 0;
+            }
+            else if (instrument.type == 12) {
+                baseExpression = Config.chipBaseExpression;
             }
             else {
                 throw new Error("Unknown instrument type in computeTone.");
@@ -24517,6 +25492,7 @@ var beepbox = (function (exports) {
                     }
                 }
             }
+            tone.voices = this._routeTone(tone, instrument, instrumentState);
         }
         static getLFOAmplitude(instrument, secondsIntoBar) {
             let effect = 0.0;
@@ -24526,6 +25502,9 @@ var beepbox = (function (exports) {
             return effect;
         }
         static getInstrumentSynthFunction(instrument) {
+            if (synthFunctionRegistry.has(instrument.type)) {
+                return synthFunctionRegistry.get(instrument.type, instrument);
+            }
             if (instrument.type == 1) {
                 const fingerprint = instrument.algorithm + "_" + instrument.feedbackType;
                 if (Synth.fmSynthFunctionCache[fingerprint] == undefined) {
@@ -25127,6 +26106,120 @@ var beepbox = (function (exports) {
                 Synth.chipFunctionCache[instrumentState.unisonVoices] = chipFunction;
             }
             chipFunction(synth, bufferIndex, roundedSamplesPerTick, tone, instrumentState);
+        }
+        static sampleTriggerSynth(synth, bufferIndex, roundedSamplesPerTick, tone, instrumentState) {
+            const song = synth.song;
+            let instrument = null;
+            for (let ci = 0; ci < song.getChannelCount(); ci++) {
+                const ch = song.channels[ci];
+                if (tone.instrumentIndex < ch.instruments.length) {
+                    instrument = ch.instruments[tone.instrumentIndex];
+                    break;
+                }
+            }
+            if (instrument == null)
+                return;
+            if (tone.pitches[0] !== instrument.sampleNote)
+                return;
+            const wave = instrumentState.wave;
+            if (wave == null || wave.length === 0)
+                return;
+            const data = synth.tempMonoInstrumentSampleBuffer;
+            if (data == null)
+                return;
+            const volumeScale = instrumentState.volumeScale * instrument.sampleGain;
+            const waveLength = wave.length - 1;
+            const semitoneOffset = tone.pitches[0] - instrument.sampleRootKey;
+            const pitchMultiplier = Math.pow(2, semitoneOffset / 12);
+            const sampleRate = instrument.sampleSampleRate || 44100;
+            const phaseDelta = pitchMultiplier * sampleRate / synth.samplesPerSecond;
+            let phase = 0.0;
+            if (tone.atNoteStart) {
+                phase = 0.0;
+                tone.phases[0] = 0.0;
+            }
+            else {
+                phase = tone.phases[0] * waveLength;
+            }
+            const filters = tone.noteFilters;
+            const filterCount = tone.noteFilterCount | 0;
+            let initialFilterInput1 = +tone.initialNoteFilterInput1;
+            let initialFilterInput2 = +tone.initialNoteFilterInput2;
+            const applyFilters = Synth.applyFilters;
+            let expression = +tone.expression;
+            const expressionDelta = +tone.expressionDelta;
+            const stopIndex = bufferIndex + roundedSamplesPerTick;
+            for (let sampleIndex = bufferIndex; sampleIndex < stopIndex; sampleIndex++) {
+                const phaseInt = phase | 0;
+                if (phaseInt >= waveLength) {
+                    break;
+                }
+                const phaseRatio = phase - phaseInt;
+                const sample = wave[phaseInt] + (wave[phaseInt + 1] - wave[phaseInt]) * phaseRatio;
+                const filteredSample = applyFilters(sample * volumeScale, initialFilterInput1, initialFilterInput2, filterCount, filters);
+                initialFilterInput2 = initialFilterInput1;
+                initialFilterInput1 = sample * volumeScale;
+                const output = filteredSample * expression;
+                expression += expressionDelta;
+                data[sampleIndex] += output;
+                phase += phaseDelta;
+            }
+            tone.phases[0] = phase / waveLength;
+            tone.expression = expression;
+            synth.sanitizeFilters(filters);
+            tone.initialNoteFilterInput1 = initialFilterInput1;
+            tone.initialNoteFilterInput2 = initialFilterInput2;
+        }
+        static noteMapSampleSynth(synth, bufferIndex, roundedSamplesPerTick, tone, instrumentState) {
+            const wave = tone.noteWave;
+            if (wave == null || wave.length === 0)
+                return;
+            const data = synth.tempMonoInstrumentSampleBuffer;
+            if (data == null)
+                return;
+            const volumeScale = instrumentState.volumeScale * tone.noteSampleGain;
+            const waveLength = wave.length - 1;
+            if (waveLength <= 0)
+                return;
+            const semitoneOffset = tone.pitches[0] - tone.noteSampleRootKey;
+            const pitchMultiplier = Math.pow(2, semitoneOffset / 12);
+            const sampleRate = tone.noteSampleRate || 44100;
+            const phaseDelta = pitchMultiplier * sampleRate / synth.samplesPerSecond;
+            let phase = 0.0;
+            if (tone.atNoteStart) {
+                phase = 0.0;
+                tone.phases[0] = 0.0;
+            }
+            else {
+                phase = tone.phases[0] * waveLength;
+            }
+            const filters = tone.noteFilters;
+            const filterCount = tone.noteFilterCount | 0;
+            let initialFilterInput1 = +tone.initialNoteFilterInput1;
+            let initialFilterInput2 = +tone.initialNoteFilterInput2;
+            const applyFilters = Synth.applyFilters;
+            let expression = +tone.expression;
+            const expressionDelta = +tone.expressionDelta;
+            const stopIndex = bufferIndex + roundedSamplesPerTick;
+            for (let sampleIndex = bufferIndex; sampleIndex < stopIndex; sampleIndex++) {
+                const phaseInt = phase | 0;
+                if (phaseInt >= waveLength)
+                    break;
+                const phaseRatio = phase - phaseInt;
+                const sample = wave[phaseInt] + (wave[phaseInt + 1] - wave[phaseInt]) * phaseRatio;
+                const filteredSample = applyFilters(sample * volumeScale, initialFilterInput1, initialFilterInput2, filterCount, filters);
+                initialFilterInput2 = initialFilterInput1;
+                initialFilterInput1 = sample * volumeScale;
+                const output = filteredSample * expression;
+                expression += expressionDelta;
+                data[sampleIndex] += output;
+                phase += phaseDelta;
+            }
+            tone.phases[0] = phase / waveLength;
+            tone.expression = expression;
+            synth.sanitizeFilters(filters);
+            tone.initialNoteFilterInput1 = initialFilterInput1;
+            tone.initialNoteFilterInput2 = initialFilterInput2;
         }
         static harmonicsSynth(synth, bufferIndex, roundedSamplesPerTick, tone, instrumentState) {
             const voiceCount = Math.max(2, instrumentState.unisonVoices);
@@ -27112,6 +28205,150 @@ var beepbox = (function (exports) {
                 operator#Output         = operator#Sample + (operator#Wave[operator#Index + 1] - operator#Sample) * (operator#PhaseMix - operator#PhaseInt);
 				const operator#Scaled   = operator#OutputMult * operator#Output;
 		`).split("\n");
+
+    synthFunctionRegistry.register(1, (instrument) => {
+        const fingerprint = instrument.algorithm + "_" + instrument.feedbackType;
+        const synthAny = Synth;
+        if (synthAny.fmSynthFunctionCache[fingerprint] == undefined) {
+            const synthSource = [];
+            for (const line of synthAny.fmSourceTemplate) {
+                if (line.indexOf("// CARRIER OUTPUTS") != -1) {
+                    const outputs = [];
+                    for (let j = 0; j < Config.algorithms[instrument.algorithm].carrierCount; j++) {
+                        outputs.push("operator" + j + "Scaled");
+                    }
+                    synthSource.push(line.replace("/*operator#Scaled*/", outputs.join(" + ")));
+                }
+                else if (line.indexOf("// INSERT OPERATOR COMPUTATION HERE") != -1) {
+                    for (let j = Config.operatorCount - 1; j >= 0; j--) {
+                        for (const operatorLine of synthAny.operatorSourceTemplate) {
+                            if (operatorLine.indexOf("/* + operator@Scaled*/") != -1) {
+                                let modulators = "";
+                                for (const modulatorNumber of Config.algorithms[instrument.algorithm].modulatedBy[j]) {
+                                    modulators += " + operator" + (modulatorNumber - 1) + "Scaled";
+                                }
+                                const feedbackIndices = Config.feedbacks[instrument.feedbackType].indices[j];
+                                if (feedbackIndices.length > 0) {
+                                    modulators += " + feedbackMult * (";
+                                    const feedbacks = [];
+                                    for (const modulatorNumber of feedbackIndices) {
+                                        feedbacks.push("operator" + (modulatorNumber - 1) + "Output");
+                                    }
+                                    modulators += feedbacks.join(" + ") + ")";
+                                }
+                                synthSource.push(operatorLine.replace(/\#/g, j + "").replace("/* + operator@Scaled*/", modulators));
+                            }
+                            else {
+                                synthSource.push(operatorLine.replace(/\#/g, j + ""));
+                            }
+                        }
+                    }
+                }
+                else if (line.indexOf("#") != -1) {
+                    for (let j = 0; j < Config.operatorCount; j++) {
+                        synthSource.push(line.replace(/\#/g, j + ""));
+                    }
+                }
+                else {
+                    synthSource.push(line);
+                }
+            }
+            const wrappedFmSynth = "return (synth, bufferIndex, roundedSamplesPerTick, tone, instrument) => {" + synthSource.join("\n") + "}";
+            synthAny.fmSynthFunctionCache[fingerprint] = new Function("Config", "Synth", wrappedFmSynth)(Config, Synth);
+        }
+        return synthAny.fmSynthFunctionCache[fingerprint];
+    });
+    synthFunctionRegistry.register(0, (instrument) => {
+        if (instrument.isUsingAdvancedLoopControls) {
+            return Synth.loopableChipSynth;
+        }
+        return Synth.chipSynth;
+    });
+    synthFunctionRegistry.register(9, (instrument) => {
+        if (instrument.isUsingAdvancedLoopControls) {
+            return Synth.loopableChipSynth;
+        }
+        return Synth.chipSynth;
+    });
+    synthFunctionRegistry.register(5, (instrument) => {
+        return Synth.harmonicsSynth;
+    });
+    synthFunctionRegistry.register(6, (instrument) => {
+        return Synth.pulseWidthSynth;
+    });
+    synthFunctionRegistry.register(8, (instrument) => {
+        return Synth.supersawSynth;
+    });
+    synthFunctionRegistry.register(7, (instrument) => {
+        return Synth.pickedStringSynth;
+    });
+    synthFunctionRegistry.register(2, (instrument) => {
+        return Synth.noiseSynth;
+    });
+    synthFunctionRegistry.register(3, (instrument) => {
+        return Synth.spectrumSynth;
+    });
+    synthFunctionRegistry.register(4, (instrument) => {
+        return Synth.drumsetSynth;
+    });
+    synthFunctionRegistry.register(10, (instrument) => {
+        return Synth.modSynth;
+    });
+    synthFunctionRegistry.register(12, (instrument) => {
+        return Synth.sampleTriggerSynth;
+    });
+    synthFunctionRegistry.register(11, (instrument) => {
+        const fingerprint = instrument.customAlgorithm.name + "_" + instrument.customFeedbackType.name;
+        const synthAny = Synth;
+        if (synthAny.fm6SynthFunctionCache[fingerprint] == undefined) {
+            const synthSource = [];
+            for (const line of synthAny.fmSourceTemplate) {
+                if (line.indexOf("// CARRIER OUTPUTS") != -1) {
+                    const outputs = [];
+                    for (let j = 0; j < instrument.customAlgorithm.carrierCount; j++) {
+                        outputs.push("operator" + j + "Scaled");
+                    }
+                    synthSource.push(line.replace("/*operator#Scaled*/", outputs.join(" + ")));
+                }
+                else if (line.indexOf("// INSERT OPERATOR COMPUTATION HERE") != -1) {
+                    for (let j = Config.operatorCount + 2 - 1; j >= 0; j--) {
+                        for (const operatorLine of synthAny.operatorSourceTemplate) {
+                            if (operatorLine.indexOf("/* + operator@Scaled*/") != -1) {
+                                let modulators = "";
+                                for (const modulatorNumber of instrument.customAlgorithm.modulatedBy[j]) {
+                                    modulators += " + operator" + (modulatorNumber - 1) + "Scaled";
+                                }
+                                const feedbackIndices = instrument.customFeedbackType.indices[j];
+                                if (feedbackIndices.length > 0) {
+                                    modulators += " + feedbackMult * (";
+                                    const feedbacks = [];
+                                    for (const modulatorNumber of feedbackIndices) {
+                                        feedbacks.push("operator" + (modulatorNumber - 1) + "Output");
+                                    }
+                                    modulators += feedbacks.join(" + ") + ")";
+                                }
+                                synthSource.push(operatorLine.replace(/\#/g, j + "").replace("/* + operator@Scaled*/", modulators));
+                            }
+                            else {
+                                synthSource.push(operatorLine.replace(/\#/g, j + ""));
+                            }
+                        }
+                    }
+                }
+                else if (line.indexOf("#") != -1) {
+                    for (let j = 0; j < Config.operatorCount + 2; j++) {
+                        synthSource.push(line.replace(/\#/g, j + ""));
+                    }
+                }
+                else {
+                    synthSource.push(line);
+                }
+            }
+            const wrappedFm6Synth = "return (synth, bufferIndex, roundedSamplesPerTick, tone, instrument) => {" + synthSource.join("\n") + "}";
+            synthAny.fm6SynthFunctionCache[fingerprint] = new Function("Config", "Synth", wrappedFm6Synth)(Config, Synth);
+        }
+        return synthAny.fm6SynthFunctionCache[fingerprint];
+    });
 
     class oscilloscopeCanvas {
         constructor(canvas, scale = 1) {
