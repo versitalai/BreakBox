@@ -48476,7 +48476,7 @@ You should be redirected to the song at:<br /><br />
                             this._dragPitch = this._cursor.curNote.pitches[this._cursor.pitchIndex == -1 ? 0 : this._cursor.pitchIndex] + this._cursor.curNote.pins[this._cursor.nearPinIndex].interval;
                             this._dragSize = this._cursor.curNote.pins[this._cursor.nearPinIndex].size;
                             this._dragVisible = true;
-                            sequence.append(new ChangeNoteTruncate(this._doc, this._pattern, start, end, this._cursor.curNote, false, this._cursor.curNote.noteId));
+                            sequence.append(new ChangeNoteTruncate(this._doc, this._pattern, start, end, this._cursor.curNote));
                             sequence.append(new ChangePinTime(this._doc, this._cursor.curNote, this._cursor.nearPinIndex, shiftedTime, continuesLastPattern));
                             this._copyPins(this._cursor.curNote);
                         }
@@ -48583,10 +48583,10 @@ You should be redirected to the song at:<br /><br />
                         if (bendEnd > this._doc.song.beatsPerBar * Config.partsPerBeat)
                             bendEnd = this._doc.song.beatsPerBar * Config.partsPerBeat;
                         if (bendEnd > this._cursor.curNote.end) {
-                            sequence.append(new ChangeNoteTruncate(this._doc, this._pattern, this._cursor.curNote.start, bendEnd, this._cursor.curNote, false, this._cursor.curNote.noteId));
+                            sequence.append(new ChangeNoteTruncate(this._doc, this._pattern, this._cursor.curNote.start, bendEnd, this._cursor.curNote));
                         }
                         if (bendEnd < this._cursor.curNote.start) {
-                            sequence.append(new ChangeNoteTruncate(this._doc, this._pattern, bendEnd, this._cursor.curNote.end, this._cursor.curNote, false, this._cursor.curNote.noteId));
+                            sequence.append(new ChangeNoteTruncate(this._doc, this._pattern, bendEnd, this._cursor.curNote.end, this._cursor.curNote));
                         }
                         let minPitch = Number.MAX_VALUE;
                         let maxPitch = -Number.MAX_VALUE;
