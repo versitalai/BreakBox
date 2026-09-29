@@ -15244,6 +15244,15 @@ li.select2-results__option[role=group] > strong:hover {
             }
             return result;
         }
+        hasOverlappingNotes() {
+            let curPart = 0;
+            for (const note of this.notes) {
+                if (note.start < curPart)
+                    return true;
+                curPart = note.end;
+            }
+            return false;
+        }
         assignNoteId(note) {
             if (note.noteId === -1) {
                 note.noteId = this.nextNoteId++;
@@ -17792,6 +17801,16 @@ li.select2-results__option[role=group] > strong:hover {
             this.bars = [];
             this.muted = false;
             this.name = "";
+            this.independentNotes = false;
+            this.chordBuilding = true;
+            this.overlapStream = false;
+        }
+        hasOverlappingNotes() {
+            for (const pattern of this.patterns) {
+                if (pattern.hasOverlappingNotes())
+                    return true;
+            }
+            return false;
         }
     }
     class Song {
@@ -18561,6 +18580,22 @@ li.select2-results__option[role=group] > strong:hover {
                     bits.write(neededBits, this.channels[channelIndex].bars[i]);
                 }
             bits.encodeBase64(buffer);
+            const overlapStreamChannels = [];
+            let needsNoteIndependenceTag = false;
+            for (let channelIndex = 0; channelIndex < this.getChannelCount(); channelIndex++) {
+                const channel = this.channels[channelIndex];
+                const overlapStream = !this.getChannelIsMod(channelIndex) && channel.hasOverlappingNotes();
+                overlapStreamChannels.push(overlapStream);
+                if (!this.getChannelIsMod(channelIndex) && (overlapStream || channel.independentNotes || !channel.chordBuilding))
+                    needsNoteIndependenceTag = true;
+            }
+            if (needsNoteIndependenceTag) {
+                buffer.push(89);
+                for (let channelIndex = 0; channelIndex < this.pitchChannelCount + this.noiseChannelCount; channelIndex++) {
+                    const channel = this.channels[channelIndex];
+                    buffer.push(base64IntToCharCode[(+overlapStreamChannels[channelIndex]) | (+channel.independentNotes << 1) | (+channel.chordBuilding << 2)]);
+                }
+            }
             buffer.push(112);
             bits = new BitFieldWriter();
             const shapeBits = new BitFieldWriter();
@@ -18570,6 +18605,7 @@ li.select2-results__option[role=group] > strong:hover {
                 const maxInstrumentsPerPattern = this.getMaxInstrumentsPerPattern(channelIndex);
                 const isNoiseChannel = this.getChannelIsNoise(channelIndex);
                 const isModChannel = this.getChannelIsMod(channelIndex);
+                const usesOffsets = isModChannel || overlapStreamChannels[channelIndex];
                 const neededInstrumentCountBits = Song.getNeededBits(maxInstrumentsPerPattern - Config.instrumentCountMin);
                 const neededInstrumentIndexBits = Song.getNeededBits(channel.instruments.length - 1);
                 if (isModChannel) {
@@ -18624,14 +18660,14 @@ li.select2-results__option[role=group] > strong:hover {
                         bits.write(1, 1);
                         let curPart = 0;
                         for (const note of pattern.notes) {
-                            if (note.start < curPart && isModChannel) {
+                            if (note.start < curPart && usesOffsets) {
                                 bits.write(2, 0);
                                 bits.write(1, 1);
                                 bits.writePartDuration(curPart - note.start);
                             }
                             if (note.start > curPart) {
                                 bits.write(2, 0);
-                                if (isModChannel)
+                                if (usesOffsets)
                                     bits.write(1, 0);
                                 bits.writePartDuration(note.start - curPart);
                             }
@@ -18732,11 +18768,11 @@ li.select2-results__option[role=group] > strong:hover {
                             }
                             curPart = note.end;
                         }
-                        if (curPart < this.beatsPerBar * Config.partsPerBeat + (+isModChannel)) {
+                        if (curPart < this.beatsPerBar * Config.partsPerBeat + (+usesOffsets)) {
                             bits.write(2, 0);
-                            if (isModChannel)
+                            if (usesOffsets)
                                 bits.write(1, 0);
-                            bits.writePartDuration(this.beatsPerBar * Config.partsPerBeat + (+isModChannel) - curPart);
+                            bits.writePartDuration(this.beatsPerBar * Config.partsPerBeat + (+usesOffsets) - curPart);
                         }
                     }
                     else {
@@ -18851,6 +18887,11 @@ li.select2-results__option[role=group] > strong:hover {
             const beforeEight = version < 8;
             const beforeNine = version < 9;
             this.initToDefault((fromBeepBox && beforeNine) || ((fromJummBox && beforeFive) || (beforeFour && fromGoldBox)));
+            for (const channel of this.channels) {
+                channel.independentNotes = false;
+                channel.chordBuilding = true;
+                channel.overlapStream = false;
+            }
             const forceSimpleFilter = (fromBeepBox && beforeNine || fromJummBox && beforeFive);
             let willLoadLegacySamplesForOldSongs = false;
             if (fromJukeBox || fromSlarmoosBox || fromUltraBox || fromGoldBox) {
@@ -19182,6 +19223,17 @@ li.select2-results__option[role=group] > strong:hover {
                                 for (let channelIndex = this.pitchChannelCount; channelIndex < this.getChannelCount(); channelIndex++) {
                                     this.channels[channelIndex].octave = 0;
                                 }
+                            }
+                        }
+                        break;
+                    case 89:
+                        {
+                            for (let channelIndex = 0; channelIndex < this.pitchChannelCount + this.noiseChannelCount; channelIndex++) {
+                                const flags = validateRange(0, 7, base64CharCodeToInt[compressed.charCodeAt(charIndex++)]);
+                                const channel = this.channels[channelIndex];
+                                channel.overlapStream = (flags & 1) != 0;
+                                channel.independentNotes = (flags & 2) != 0;
+                                channel.chordBuilding = (flags & 4) != 0;
                             }
                         }
                         break;
@@ -20733,6 +20785,7 @@ li.select2-results__option[role=group] > strong:hover {
                                         detuneScaleNotes[j][Config.modCount - 1 - i] = 1 + 3 * +(((beforeFive && fromJummBox) || (beforeFour && fromGoldBox)) && isModChannel && (channel.instruments[j].modulators[i] == Config.modulators.dictionary["detune"].index));
                                     }
                                 }
+                                const usesOffsets = isModChannel || channel.overlapStream;
                                 const octaveOffset = (isNoiseChannel || isModChannel) ? 0 : channel.octave * 12;
                                 let lastPitch = ((isNoiseChannel || isModChannel) ? 4 : octaveOffset);
                                 const recentPitches = isModChannel ? [0, 1, 2, 3, 4, 5] : (isNoiseChannel ? [4, 6, 7, 2, 3, 8, 0, 10] : [0, 7, 12, 19, 24, -5, -12]);
@@ -20766,7 +20819,7 @@ li.select2-results__option[role=group] > strong:hover {
                                     let curPart = 0;
                                     const newNotes = newPattern.notes;
                                     let noteCount = 0;
-                                    while (curPart < this.beatsPerBar * Config.partsPerBeat + (+isModChannel)) {
+                                    while (curPart < this.beatsPerBar * Config.partsPerBeat + (+usesOffsets)) {
                                         const useOldShape = bits.read(1) == 1;
                                         let newNote = false;
                                         let shapeIndex = 0;
@@ -20777,7 +20830,7 @@ li.select2-results__option[role=group] > strong:hover {
                                             newNote = bits.read(1) == 1;
                                         }
                                         if (!useOldShape && !newNote) {
-                                            if (isModChannel) {
+                                            if (usesOffsets) {
                                                 const isBackwards = bits.read(1) == 1;
                                                 const restLength = bits.readPartDuration();
                                                 if (isBackwards) {
@@ -21354,6 +21407,10 @@ li.select2-results__option[role=group] > strong:hover {
                 if (!isNoiseChannel) {
                     channelObject["octaveScrollBar"] = channel.octave - 1;
                 }
+                if (channel.independentNotes)
+                    channelObject["independentNotes"] = true;
+                if (!channel.chordBuilding)
+                    channelObject["chordBuilding"] = false;
                 channelArray.push(channelObject);
             }
             const result = {
@@ -21893,6 +21950,10 @@ li.select2-results__option[role=group] > strong:hover {
                     }
                     else {
                         channel.name = "";
+                    }
+                    if (!isModChannel) {
+                        channel.independentNotes = channelObject["independentNotes"] === true;
+                        channel.chordBuilding = channelObject["chordBuilding"] !== false;
                     }
                     if (Array.isArray(channelObject["instruments"])) {
                         const instrumentObjects = channelObject["instruments"];
@@ -31583,6 +31644,8 @@ li.select2-results__option[role=group] > strong:hover {
                 newChannel.muted = oldChannel.muted;
                 newChannel.octave = oldChannel.octave;
                 newChannel.name = oldChannel.name;
+                newChannel.independentNotes = oldChannel.independentNotes;
+                newChannel.chordBuilding = oldChannel.chordBuilding;
                 for (const instrument of oldChannel.instruments) {
                     newChannel.instruments.push(instrument);
                 }

@@ -101,6 +101,16 @@ export class Pattern {
         return result;
     }
 
+    // True when the base64 note stream would need a negative offset, i.e. some note starts before the previous one ends.
+    public hasOverlappingNotes(): boolean {
+        let curPart: number = 0;
+        for (const note of this.notes) {
+            if (note.start < curPart) return true;
+            curPart = note.end;
+        }
+        return false;
+    }
+
     public assignNoteId(note: Note): number {
         if (note.noteId === -1) {
             note.noteId = this.nextNoteId++;
@@ -2975,6 +2985,19 @@ export class Channel {
     public readonly bars: number[] = [];
     public muted: boolean = false;
     public name: string = "";
+    // Editing policy only: overlapping notes are never trimmed or merged when set.
+    public independentNotes: boolean = false;
+    // When false, placing a different pitch on an existing note starts a new note instead of a chord.
+    public chordBuilding: boolean = true;
+    // Set by the URL decoder: this channel's note stream carries negative offsets (overlapping notes).
+    public overlapStream: boolean = false;
+
+    public hasOverlappingNotes(): boolean {
+        for (const pattern of this.patterns) {
+            if (pattern.hasOverlappingNotes()) return true;
+        }
+        return false;
+    }
 }
 
 export class Song {
@@ -3883,6 +3906,26 @@ export class Song {
         }
         bits.encodeBase64(buffer);
 
+        // Per pitch/noise channel: bit0 overlapping-note stream, bit1 independent notes, bit2 chord building.
+        // Only written when some channel differs from the defaults, so ordinary songs keep an identical URL.
+        const overlapStreamChannels: boolean[] = [];
+        let needsNoteIndependenceTag: boolean = false;
+        for (let channelIndex: number = 0; channelIndex < this.getChannelCount(); channelIndex++) {
+            const channel: Channel = this.channels[channelIndex];
+            const overlapStream: boolean = !this.getChannelIsMod(channelIndex) && channel.hasOverlappingNotes();
+            overlapStreamChannels.push(overlapStream);
+            if (!this.getChannelIsMod(channelIndex) && (overlapStream || channel.independentNotes || !channel.chordBuilding)) needsNoteIndependenceTag = true;
+        }
+        if (needsNoteIndependenceTag) {
+            buffer.push(SongTagCode.noteIndependence);
+            for (let channelIndex: number = 0; channelIndex < this.pitchChannelCount + this.noiseChannelCount; channelIndex++) {
+                const channel: Channel = this.channels[channelIndex];
+                buffer.push(base64IntToCharCode[
+                    (+overlapStreamChannels[channelIndex]) | (+channel.independentNotes << 1) | (+channel.chordBuilding << 2)
+                ]);
+            }
+        }
+
         buffer.push(SongTagCode.patterns);
         bits = new BitFieldWriter();
         const shapeBits: BitFieldWriter = new BitFieldWriter();
@@ -3892,6 +3935,8 @@ export class Song {
             const maxInstrumentsPerPattern: number = this.getMaxInstrumentsPerPattern(channelIndex);
             const isNoiseChannel: boolean = this.getChannelIsNoise(channelIndex);
             const isModChannel: boolean = this.getChannelIsMod(channelIndex);
+            // Mod channels always use signed offsets between notes; other channels only when they hold overlapping notes.
+            const usesOffsets: boolean = isModChannel || overlapStreamChannels[channelIndex];
             const neededInstrumentCountBits: number = Song.getNeededBits(maxInstrumentsPerPattern - Config.instrumentCountMin);
             const neededInstrumentIndexBits: number = Song.getNeededBits(channel.instruments.length - 1);
 
@@ -3970,8 +4015,8 @@ export class Song {
                     let curPart: number = 0;
                     for (const note of pattern.notes) {
 
-                        // For mod channels, a negative offset may be necessary.
-                        if (note.start < curPart && isModChannel) {
+                        // For mod channels and overlapping-note streams, a negative offset may be necessary.
+                        if (note.start < curPart && usesOffsets) {
                             bits.write(2, 0); // rest, then...
                             bits.write(1, 1); // negative offset
                             bits.writePartDuration(curPart - note.start);
@@ -3979,7 +4024,7 @@ export class Song {
 
                         if (note.start > curPart) {
                             bits.write(2, 0); // rest
-                            if (isModChannel) bits.write(1, 0); // positive offset, only needed for mod channels
+                            if (usesOffsets) bits.write(1, 0); // positive offset, only needed when offsets are signed
                             bits.writePartDuration(note.start - curPart);
                         }
 
@@ -4084,10 +4129,10 @@ export class Song {
                         curPart = note.end;
                     }
 
-                    if (curPart < this.beatsPerBar * Config.partsPerBeat + (+isModChannel)) {
+                    if (curPart < this.beatsPerBar * Config.partsPerBeat + (+usesOffsets)) {
                         bits.write(2, 0); // rest
-                        if (isModChannel) bits.write(1, 0); // positive offset
-                        bits.writePartDuration(this.beatsPerBar * Config.partsPerBeat + (+isModChannel) - curPart);
+                        if (usesOffsets) bits.write(1, 0); // positive offset
+                        bits.writePartDuration(this.beatsPerBar * Config.partsPerBeat + (+usesOffsets) - curPart);
                     }
                 } else {
                     bits.write(1, 0);
@@ -4203,6 +4248,11 @@ export class Song {
         const beforeEight: boolean = version < 8;
         const beforeNine: boolean = version < 9;
         this.initToDefault((fromBeepBox && beforeNine) || ((fromJummBox && beforeFive) || (beforeFour && fromGoldBox)));
+        for (const channel of this.channels) {
+            channel.independentNotes = false;
+            channel.chordBuilding = true;
+            channel.overlapStream = false;
+        }
         const forceSimpleFilter: boolean = (fromBeepBox && beforeNine || fromJummBox && beforeFive);
         let willLoadLegacySamplesForOldSongs: boolean = false;
 
@@ -4531,6 +4581,15 @@ export class Song {
                     for (let channelIndex: number = this.pitchChannelCount; channelIndex < this.getChannelCount(); channelIndex++) {
                         this.channels[channelIndex].octave = 0;
                     }
+                }
+            } break;
+            case SongTagCode.noteIndependence: {
+                for (let channelIndex: number = 0; channelIndex < this.pitchChannelCount + this.noiseChannelCount; channelIndex++) {
+                    const flags: number = validateRange(0, 7, base64CharCodeToInt[compressed.charCodeAt(charIndex++)]);
+                    const channel: Channel = this.channels[channelIndex];
+                    channel.overlapStream = (flags & 1) != 0;
+                    channel.independentNotes = (flags & 2) != 0;
+                    channel.chordBuilding = (flags & 4) != 0;
                 }
             } break;
             case SongTagCode.startInstrument: {
@@ -6156,6 +6215,7 @@ export class Song {
                             detuneScaleNotes[j][Config.modCount - 1 - i] = 1 + 3 * +(((beforeFive && fromJummBox) || (beforeFour && fromGoldBox)) && isModChannel && (channel.instruments[j].modulators[i] == Config.modulators.dictionary["detune"].index));
                         }
                     }
+                    const usesOffsets: boolean = isModChannel || channel.overlapStream;
                     const octaveOffset: number = (isNoiseChannel || isModChannel) ? 0 : channel.octave * 12;
                     let lastPitch: number = ((isNoiseChannel || isModChannel) ? 4 : octaveOffset);
                     const recentPitches: number[] = isModChannel ? [0, 1, 2, 3, 4, 5] : (isNoiseChannel ? [4, 6, 7, 2, 3, 8, 0, 10] : [0, 7, 12, 19, 24, -5, -12]);
@@ -6191,7 +6251,7 @@ export class Song {
                         const newNotes: Note[] = newPattern.notes;
                         let noteCount: number = 0;
                         // Due to arbitrary note positioning, mod channels don't end the count until curPart actually exceeds the max
-                        while (curPart < this.beatsPerBar * Config.partsPerBeat + (+isModChannel)) {
+                        while (curPart < this.beatsPerBar * Config.partsPerBeat + (+usesOffsets)) {
 
                             const useOldShape: boolean = bits.read(1) == 1;
                             let newNote: boolean = false;
@@ -6203,8 +6263,8 @@ export class Song {
                             }
 
                             if (!useOldShape && !newNote) {
-                                // For mod channels, check if you need to move backward too (notes can appear in any order and offset from each other).
-                                if (isModChannel) {
+                                // For mod channels and overlapping-note streams, check if you need to move backward too (notes can appear in any order and offset from each other).
+                                if (usesOffsets) {
                                     const isBackwards: boolean = bits.read(1) == 1;
                                     const restLength: number = bits.readPartDuration();
                                     if (isBackwards) {
@@ -6805,6 +6865,8 @@ export class Song {
                 // For compatibility with old versions the octave is offset by one.
                 channelObject["octaveScrollBar"] = channel.octave - 1;
             }
+            if (channel.independentNotes) channelObject["independentNotes"] = true;
+            if (!channel.chordBuilding) channelObject["chordBuilding"] = false;
             channelArray.push(channelObject);
         }
 
@@ -7398,6 +7460,11 @@ export class Song {
                 }
                 else {
                     channel.name = "";
+                }
+
+                if (!isModChannel) {
+                    channel.independentNotes = channelObject["independentNotes"] === true;
+                    channel.chordBuilding = channelObject["chordBuilding"] !== false;
                 }
 
                 if (Array.isArray(channelObject["instruments"])) {

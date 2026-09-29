@@ -425,6 +425,8 @@ export class ChangeMoveAndOverflowNotes extends ChangeGroup {
             newChannel.muted = oldChannel.muted;
             newChannel.octave = oldChannel.octave;
             newChannel.name = oldChannel.name;
+            newChannel.independentNotes = oldChannel.independentNotes;
+            newChannel.chordBuilding = oldChannel.chordBuilding;
 
             for (const instrument of oldChannel.instruments) {
                 newChannel.instruments.push(instrument);

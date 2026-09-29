@@ -1,6 +1,6 @@
 # Note Independence — Paper Trail & Plan
 
-Status: design approved (see Decisions). **Phase 0 implemented**; Phases 1-5 not started.
+Status: design approved (see Decisions). **Phases 0-1 implemented** (safety net; save format); Phases 2-5 not started.
 
 Goal: each note's **start, length and pitch are its own**. A note never has to
 join a chord, never gets trimmed because another note overlaps it, and never

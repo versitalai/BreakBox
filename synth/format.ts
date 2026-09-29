@@ -97,6 +97,7 @@ export const enum SongTagCode {
     channelCount = CharCode.n, // added in BeepBox URL version 6
     channelOctave = CharCode.o, // added in BeepBox URL version 3
     patterns = CharCode.p, // added in BeepBox URL version 2
+    noteIndependence = CharCode.Y, // per-channel overlap/independence flags, written before patterns only when needed
     effects = CharCode.q, // added in BeepBox URL version 7
     rhythm = CharCode.r, // added in BeepBox URL version 2
     scale = CharCode.s, // added in BeepBox URL version 2
